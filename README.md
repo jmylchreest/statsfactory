@@ -55,6 +55,122 @@ curl -X POST http://localhost:8787/v1/events \
   }'
 ```
 
+## Sending Events
+
+### Using an SDK
+
+Official SDKs handle batching, background flushing, session IDs, and structured
+User-Agent headers automatically:
+
+- **TypeScript/JavaScript** (browser, Node, Bun, Deno, Workers):
+  [`@statsfactory/sdk`](packages/sdk-ts/README.md)
+- **Go**: [`statsfactory`](packages/sdk-go/README.md)
+
+```ts
+import { StatsFactory } from "@statsfactory/sdk";
+
+const sf = new StatsFactory({
+  serverUrl: "https://stats.example.com",
+  appKey: "sf_live_xxxx",
+  clientName: "myapp",
+  clientVersion: "1.0.0",
+});
+
+sf.track("plugin_used", {
+  "plugin.name": "kitty",
+  "plugin.version": "0.1.27",
+  "plugin.status": "ok",
+});
+```
+
+### Using plain HTTP
+
+No SDK required -- any HTTP client works. The full API is described by an
+**OpenAPI 3.1 spec** available at:
+
+```
+GET /v1/doc
+```
+
+For example: `https://stats.example.com/v1/doc` -- you can feed this to any
+OpenAPI-compatible tool (Swagger UI, code generators, Postman, etc.) to explore
+and interact with the API.
+
+#### Ingest endpoint
+
+```
+POST /v1/events
+Authorization: Bearer <app-key>
+Content-Type: application/json
+```
+
+**Request body:**
+
+```json
+{
+  "events": [
+    {
+      "event": "page_view",
+      "timestamp": "2026-03-14T10:30:00Z",
+      "session_id": "optional-session-id",
+      "distinct_id": "optional-user-id",
+      "dimensions": {
+        "page.path": "/home",
+        "theme": "dark",
+        "version": 2,
+        "beta": true
+      }
+    }
+  ]
+}
+```
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `event` | string | Yes | Lowercase alphanumeric + underscores, max 64 chars. Must start with a letter. |
+| `timestamp` | string | No | ISO 8601. Defaults to server time if omitted. |
+| `session_id` | string | No | Client-provided session identifier. |
+| `distinct_id` | string | No | Client-provided user/install identifier. |
+| `dimensions` | object | No | Key-value map. Keys: lowercase `a-z0-9_.`, max 64 chars. Values: string (max 256 chars), number, or boolean. Max 10 user-provided dimensions per event. |
+
+Up to 25 events per request. Valid events are accepted even if others in the
+batch fail validation (partial acceptance).
+
+**Response:**
+
+```json
+{
+  "accepted": 1,
+  "errors": []
+}
+```
+
+Errors include an `index` field identifying which event failed and a `message`
+explaining why.
+
+#### Minimal curl example
+
+```bash
+curl -X POST https://stats.example.com/v1/events \
+  -H "Authorization: Bearer sf_live_YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"events": [{"event": "app_started"}]}'
+```
+
+#### User-Agent convention
+
+If you're building your own client, set a structured `User-Agent` header so the
+server can extract SDK/client enrichment dimensions automatically:
+
+```
+statsfactory-sdk-<lang>/<sdk-version> (<client-name>/<client-version>; <os>; <arch>)
+```
+
+For example: `statsfactory-sdk-go/0.1.0 (tinct/0.1.27; linux; amd64)`. This
+produces enrichment dimensions like `sdk.name`, `sdk.version`, `client.name`,
+`client.version`, `client.os`, and `client.arch`. Browser User-Agent strings
+are also parsed for `client.browser`, `client.os`, and `client.device_type`.
+
 ## Project Structure
 
 ```
