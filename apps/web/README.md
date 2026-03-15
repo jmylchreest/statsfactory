@@ -4,53 +4,40 @@ Cloudflare Worker running the Hono API and Astro dashboard.
 
 ## Local Development
 
+Prerequisites: [bun](https://bun.sh), [just](https://just.systems)
+
 ```bash
-bun install          # from repo root
-bun run setup:local  # from apps/web/
+just init    # install deps, apply D1 schema, seed test app
+just run     # build + wrangler dev on port 8787
 ```
 
-`setup:local` does everything in one command:
+`just init` does everything in one command:
 
-1. Creates `.dev.vars` from the example template
-2. Pushes the database schema to a local SQLite file (`local.db`)
-3. Seeds a test app and prints the ingest key
-4. Starts a local libSQL HTTP server on port 8080
-5. Starts the Astro dev server on port 4321
+1. Installs dependencies (`bun install`)
+2. Creates `.dev.vars` from the example template
+3. Applies the D1 migration to a local miniflare SQLite database
+4. Seeds a test app and prints the ingest key
 
 ### Running Components Individually
 
-If you need more control:
-
 ```bash
-# Terminal 1: local database server
-bun run scripts/dev-db.ts
-
-# Terminal 2: push schema + seed (only needed once)
-TURSO_DATABASE_URL=file:local.db bun run setup:db
-TURSO_DATABASE_URL=file:local.db bun run setup:seed
-
-# Terminal 2: dev server
-bun run dev
-```
-
-### Database Tools
-
-```bash
-bun run db:push       # Push schema changes to database
-bun run db:generate   # Generate Drizzle migration files
-bun run db:migrate    # Run migrations
-bun run db:studio     # Open Drizzle Studio GUI
+just install       # bun install
+just setup-env     # create .dev.vars from example
+just setup-db      # apply D1 migrations locally
+just setup-seed    # seed test app + API key
+just build         # astro build
+just run           # build + wrangler dev
 ```
 
 ## Testing
 
 ```bash
-bun run test          # Run once
-bun run test:watch    # Watch mode
+just test          # Run once
+just test-watch    # Watch mode
 ```
 
-143 tests across 9 files covering validation, query schemas, crypto, ULID
-generation, enrichment middleware, rollup logic, UA parsing, and integration.
+Tests use Miniflare for D1 integration tests (in-memory SQLite, no external
+processes needed).
 
 ## API Endpoints
 
@@ -100,40 +87,35 @@ All query and management endpoints require `app_id` as a query parameter.
 
 See [`.dev.vars.example`](.dev.vars.example) for documentation. Key variables:
 
-- `TURSO_DATABASE_URL` -- database connection URL
-- `TURSO_AUTH_TOKEN` -- database auth token
-- `CF_ACCESS_TEAM_DOMAIN` -- (optional) enables Cloudflare Access auth; omit for dev mode
+- `DB` -- D1 database binding (configured in `wrangler.toml`)
+- `STATSFACTORY_DEV` -- set to `1` for local dev (bypasses dashboard auth)
+- `CF_ACCESS_TEAM_DOMAIN` -- (production) enables Cloudflare Access auth
 
 ## Production Deployment
 
 ### Prerequisites
 
 - A [Cloudflare](https://dash.cloudflare.com) account (free tier works)
-- [Turso](https://turso.tech) account (free tier: 5 GB storage, 500 M reads/month)
 - [bun](https://bun.sh) and [wrangler](https://developers.cloudflare.com/workers/wrangler/) installed
 - (Optional) A custom domain pointed at Cloudflare
 
-### 1. Create the Turso database
+### 1. Create the D1 database
 
 ```bash
-turso db create statsfactory
-turso db show statsfactory --url     # → libsql://statsfactory-xxx.turso.io
-turso db tokens create statsfactory  # → your auth token
+wrangler d1 create statsfactory
 ```
 
-### 2. Push the database schema
+Copy the `database_id` from the output into `apps/web/wrangler.toml` (replacing `"local-dev"`).
+
+### 2. Apply the schema
 
 ```bash
-TURSO_DATABASE_URL=libsql://statsfactory-xxx.turso.io \
-TURSO_AUTH_TOKEN=your-token \
-bun run db:push
+cd apps/web && wrangler d1 migrations apply statsfactory --remote
 ```
 
 ### 3. Set Cloudflare Worker secrets
 
 ```bash
-wrangler secret put TURSO_DATABASE_URL   # paste the libsql:// URL
-wrangler secret put TURSO_AUTH_TOKEN     # paste the token
 wrangler secret put CF_ACCESS_TEAM_DOMAIN  # e.g. your-team.cloudflareaccess.com
 ```
 
@@ -152,11 +134,11 @@ The dashboard and query API are protected by
 [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/configure-apps/).
 This is free for up to 50 users.
 
-1. Go to **Cloudflare Zero Trust** dashboard → **Access** → **Applications**
-2. Click **Add an application** → **Self-hosted**
+1. Go to **Cloudflare Zero Trust** dashboard > **Access** > **Applications**
+2. Click **Add an application** > **Self-hosted**
 3. Set the **Application domain** to your worker URL or custom domain
 4. Add an **Allow** policy (e.g. email ending in `@yourcompany.com`)
-5. Save — Cloudflare Access now handles login, MFA, and session cookies
+5. Save -- Cloudflare Access now handles login, MFA, and session cookies
 
 The `CF_ACCESS_TEAM_DOMAIN` secret (e.g. `your-team.cloudflareaccess.com`) tells
 the auth middleware to validate the `Cf-Access-Authenticated-User-Email` header
@@ -169,13 +151,13 @@ that Access sets automatically on every request.
 curl -X POST https://your-worker.workers.dev/v1/apps \
   -H "Content-Type: application/json" \
   -d '{"name": "My App"}'
-# → {"id":"01J1ABCDE...","name":"My App"}
+# -> {"id":"01J1ABCDE...","name":"My App"}
 
 # Create an ingest key
 curl -X POST https://your-worker.workers.dev/v1/apps/01J1ABCDE.../keys \
   -H "Content-Type: application/json" \
   -d '{"name": "Production Key"}'
-# → {"id":"...","key":"sf_live_xxx","key_prefix":"sf_live_","name":"Production Key","note":"..."}
+# -> {"id":"...","key":"sf_live_xxx","key_prefix":"sf_live_","name":"Production Key","note":"..."}
 ```
 
 Or use the **Manage Apps** page in the dashboard to create apps and keys via the UI.
@@ -200,7 +182,7 @@ curl -X POST https://your-worker.workers.dev/v1/cron/retention
 
 ### Custom domain
 
-Add a custom domain via **Cloudflare Workers** → **Settings** → **Triggers** →
+Add a custom domain via **Cloudflare Workers** > **Settings** > **Triggers** >
 **Custom Domains**, or use a `routes` block in `wrangler.toml`:
 
 ```toml
@@ -214,8 +196,8 @@ routes = [
 | Service | Free tier limit | Typical usage (5-10 apps) |
 |---------|----------------|--------------------------|
 | CF Workers | 100 K requests/day | Well within limits |
-| Turso | 5 GB, 500 M reads, 10 M writes/mo | Comfortable |
+| D1 | 5 M reads/day, 100 K writes/day, 5 GB | Comfortable |
 | CF Access | 50 users | More than enough |
 
-For heavier usage, the CF Workers paid plan ($5/mo) provides 10 M requests/mo,
-and Turso Scaler ($29/mo) gives 24 GB + 1 B reads.
+For heavier usage, the CF Workers paid plan ($5/mo) provides 10 M requests/mo
+and D1 paid gives 25 B reads + 50 M writes/mo.

@@ -19,7 +19,7 @@ export default {
 
   async scheduled(
     controller: ScheduledController,
-    env: { DB?: D1Database; TURSO_DATABASE_URL?: string; TURSO_AUTH_TOKEN?: string },
+    env: { DB: D1Database },
     ctx: ExecutionContext,
   ) {
     const db = createDb(env);

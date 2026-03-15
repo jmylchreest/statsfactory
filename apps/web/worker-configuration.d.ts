@@ -4,9 +4,7 @@
 declare namespace Cloudflare {
 	interface Env {
 		ASSETS: Fetcher;
-		DB?: D1Database;
-		TURSO_DATABASE_URL?: string;
-		TURSO_AUTH_TOKEN?: string;
+		DB: D1Database;
 		CF_ACCESS_TEAM_DOMAIN?: string;
 	}
 }
@@ -15,7 +13,7 @@ type StringifyValues<EnvType extends Record<string, unknown>> = {
 	[Binding in keyof EnvType]: EnvType[Binding] extends string ? EnvType[Binding] : string;
 };
 declare namespace NodeJS {
-	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "TURSO_DATABASE_URL" | "TURSO_AUTH_TOKEN" | "DB">> {}
+	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "DB">> {}
 }
 
 // Begin runtime types

@@ -6,8 +6,8 @@ Most analytics platforms are overkill (and expensive) for the kind of usage
 data open-source maintainers actually need: which versions are people running,
 what features get used, where do crashes happen? statsfactory gives you that
 insight without costing a cent -- it deploys as a single Cloudflare Worker on
-the **free tier** with D1 (or Turso) for storage. No servers to manage, no
-monthly bills, no vendor lock-in.
+the **free tier** with D1 for storage. No servers to manage, no monthly bills,
+no vendor lock-in.
 
 - **Zero cost** -- runs entirely within Cloudflare's free tier (Workers + D1).
   Comfortable for thousands of events per day across multiple projects.
@@ -25,24 +25,23 @@ monthly bills, no vendor lock-in.
 
 ## Quick Start
 
-Prerequisites: [bun](https://bun.sh)
+Prerequisites: [bun](https://bun.sh), [just](https://just.systems)
 
 ```bash
 git clone https://github.com/jmylchreest/statsfactory.git
 cd statsfactory
-bun install
-cd apps/web
-bun run setup:local
+just init
+just run
 ```
 
-This pushes the schema to a local SQLite file, seeds a test app with an ingest
-key, starts a local libSQL HTTP server, and opens the Astro dev server at
-`http://localhost:4321`.
+This installs dependencies, applies the D1 schema to a local miniflare SQLite
+database, seeds a test app with an ingest key, builds, and starts `wrangler dev`
+at `http://localhost:8787`.
 
 The seed output prints your app key (`sf_live_...`). Use it to send test events:
 
 ```bash
-curl -X POST http://localhost:4321/v1/events \
+curl -X POST http://localhost:8787/v1/events \
   -H "Authorization: Bearer sf_live_YOUR_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -75,34 +74,25 @@ See sub-READMEs for details:
 
 ## Deploy
 
-See [docs/deploy.md](docs/deploy.md) for production deployment (D1 or Turso,
-Cloudflare Workers, custom domain, Zero Trust auth). The `wrangler.toml` is
-ready to go -- create a D1 database, set one secret, and run `wrangler deploy`.
+See [docs/deploy.md](docs/deploy.md) for production deployment (Cloudflare
+Workers + D1, custom domain, Zero Trust auth). The `wrangler.toml` is ready
+to go -- create a D1 database, set one secret, and run `wrangler deploy`.
 
 ## Configuration
 
 All configuration is via environment variables. For local dev these live in
-`apps/web/.dev.vars` (created automatically by `setup:local`).
+`apps/web/.dev.vars` (created automatically by `just setup-env`).
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `DB` | D1 | Cloudflare D1 binding (set via `wrangler.toml`, not a secret) |
-| `TURSO_DATABASE_URL` | Turso | Turso/libSQL connection URL (alternative to D1) |
-| `TURSO_AUTH_TOKEN` | Turso | Turso auth token (`unused` for local dev) |
-| `CF_ACCESS_TEAM_DOMAIN` | No | Cloudflare Access team domain. When absent, dashboard auth is bypassed (dev mode). |
-
-One of `DB` or `TURSO_DATABASE_URL` must be configured. If both are present,
-D1 takes priority.
+| `DB` | Yes | Cloudflare D1 binding (set via `wrangler.toml`, not a secret) |
+| `CF_ACCESS_TEAM_DOMAIN` | Production | Cloudflare Access team domain. Required for production dashboard auth. |
+| `STATSFACTORY_DEV` | Dev only | Set to `1` to bypass dashboard auth in local development. |
 
 For production, set secrets as Cloudflare Worker secrets:
 
 ```bash
-# D1 users only need:
 wrangler secret put CF_ACCESS_TEAM_DOMAIN
-
-# Turso users also need:
-wrangler secret put TURSO_DATABASE_URL
-wrangler secret put TURSO_AUTH_TOKEN
 ```
 
 ## Authentication
@@ -112,7 +102,7 @@ Two separate auth mechanisms:
 - **Ingest** (`POST /v1/events`): Bearer token using an app key (`sf_live_...`).
   App keys are public, embedded in client SDKs, and map events to apps.
 - **Dashboard & Query API**: Cloudflare Access (Zero Trust). In local dev this
-  is bypassed automatically.
+  is bypassed automatically when `STATSFACTORY_DEV=1`.
 
 ## FAQ
 
@@ -129,17 +119,11 @@ Cloudflare Workers free tier gives you 100K requests/day and D1 gives you 5GB
 storage with 5M reads/day and 100K writes/day. That's enough for thousands of
 telemetry events per day across multiple open-source projects -- more than most
 OSS maintainers will ever need. If you outgrow it, the Workers paid plan
-($5/month) removes all daily caps. Turso is also supported as an alternative
-backend with its own generous free tier (500M reads, 10M writes/month).
+($5/month) removes all daily caps.
 
 **Do I need Cloudflare Access for local development?**
-No. When `CF_ACCESS_TEAM_DOMAIN` is not set, dashboard auth is bypassed with a
-`dev@localhost` identity.
-
-**Can I use a database other than D1?**
-Turso (or any libSQL-compatible database) is supported as an alternative.
-Set `TURSO_DATABASE_URL` instead of the D1 binding. The local dev setup uses
-a plain SQLite file served over HTTP via the Turso path.
+No. When `STATSFACTORY_DEV=1` is set in `.dev.vars`, dashboard auth is bypassed
+with a `dev@localhost` identity.
 
 ## License
 

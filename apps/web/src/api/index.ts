@@ -14,9 +14,7 @@ import { HealthResponseSchema } from "./lib/schemas";
 
 export type AppEnv = {
   Bindings: {
-    DB?: D1Database;
-    TURSO_DATABASE_URL?: string;
-    TURSO_AUTH_TOKEN?: string;
+    DB: D1Database;
     CF_ACCESS_TEAM_DOMAIN?: string;
   };
   Variables: {
@@ -41,13 +39,11 @@ app.use(
   }),
 );
 
-// DB middleware — create Drizzle instance from env bindings
+// DB middleware — create Drizzle instance from D1 binding
 app.use("*", async (c, next) => {
   const db = createDb(c.env);
   // Enable foreign key enforcement for D1 (required for ON DELETE CASCADE)
-  if (c.env.DB) {
-    await c.env.DB.exec("PRAGMA foreign_keys = ON");
-  }
+  await c.env.DB.exec("PRAGMA foreign_keys = ON");
   c.set("db", db);
   await next();
 });

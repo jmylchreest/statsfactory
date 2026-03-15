@@ -3,8 +3,8 @@ compatibility_date = "2026-03-12"
 compatibility_flags = ["nodejs_compat"]
 
 # ── Database ─────────────────────────────────────────────────────────────────
-# D1 (recommended — zero latency, generous free tier).
-# For local dev: the deploy script or `just init` creates a local D1 database.
+# D1 — zero latency, colocated with the Worker.
+# For local dev: `just init` creates a local D1 database via miniflare.
 # For production: `wrangler d1 create statsfactory` and paste the database_id.
 [[d1_databases]]
 binding = "DB"
@@ -13,11 +13,6 @@ database_id = "local-dev"
 migrations_dir = "migrations"
 # ⬆ Replace "local-dev" with your real database_id for production.
 #   The deploy script handles this automatically.
-#
-# Alternative: Turso / libSQL (portable, no vendor lock-in).
-# Comment out the [[d1_databases]] block above, then set secrets:
-#   wrangler secret put TURSO_DATABASE_URL
-#   wrangler secret put TURSO_AUTH_TOKEN
 
 [vars]
 # Non-secret environment variables.

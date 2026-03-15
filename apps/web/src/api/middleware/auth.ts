@@ -49,9 +49,9 @@ export const appKeyAuth = createMiddleware<AppEnv>(async (c, next) => {
  * a signed JWT (`Cf-Access-JWT-Assertion` header) with the user's identity.
  * The CF Access policy controls WHO can access the dashboard/admin routes.
  *
- * In development (no CF_ACCESS_TEAM_DOMAIN configured), the middleware is
- * permissive and sets a default dev email — so local dev works without
- * Cloudflare Access.
+ * In development (no CF_ACCESS_TEAM_DOMAIN configured), the middleware checks
+ * for STATSFACTORY_DEV=1 to enable dev bypass with a default dev email.
+ * This ensures fail-closed in production if CF_ACCESS_TEAM_DOMAIN is missing.
  *
  * Sets `c.set("cfAccessEmail", ...)` on success.
  */
@@ -59,16 +59,12 @@ export const cfAccessAuth = createMiddleware<AppEnv>(async (c, next) => {
   const teamDomain = c.env.CF_ACCESS_TEAM_DOMAIN;
 
   if (!teamDomain) {
-    // Only allow dev bypass when running locally (DB URL points to localhost).
+    // Only allow dev bypass when explicitly opted in via STATSFACTORY_DEV=1.
     // In production (Cloudflare Workers), fail closed — reject all requests
     // if CF_ACCESS_TEAM_DOMAIN is not configured.
-    const dbUrl = c.env.TURSO_DATABASE_URL ?? "";
-    const isLocal =
-      dbUrl.startsWith("http://127.0.0.1") ||
-      dbUrl.startsWith("http://localhost") ||
-      dbUrl.startsWith("file:");
+    const isDev = (c.env as Record<string, unknown>).STATSFACTORY_DEV === "1";
 
-    if (!isLocal) {
+    if (!isDev) {
       return c.json(
         {
           error:

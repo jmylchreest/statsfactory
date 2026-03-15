@@ -123,7 +123,7 @@ ingestRouter.openapi(ingestRoute, async (c) => {
     }
   }
 
-  // Batch insert into D1/Turso.
+  // Batch insert into D1.
   // D1 limits bind parameters to 100 per statement, so we chunk inserts.
   // Events: 7 columns → max 14 rows/chunk. Dimensions: 4 columns → max 25 rows/chunk.
   const EVENT_CHUNK = 14;

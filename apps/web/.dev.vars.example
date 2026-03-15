@@ -1,40 +1,19 @@
-# Database configuration.
+# Local development variables.
 # Copy this file to .dev.vars (which is gitignored).
 #
-# ── Local development ─────────────────────────────────────
-# The setup:local script starts a local libSQL HTTP server
-# on port 8080 backed by a SQLite file. These defaults work:
+# ── Database ─────────────────────────────────────────────
+# D1 is the database backend. In local dev, `wrangler dev` provides a
+# local D1 binding automatically (miniflare SQLite). No env vars needed.
 #
-#   TURSO_DATABASE_URL=http://127.0.0.1:8080
-#   TURSO_AUTH_TOKEN=unused
-#
-# (D1 bindings can't be used in local dev outside `wrangler dev`,
-# so local dev always uses the Turso/libSQL path.)
-#
-# ── Production: Cloudflare D1 (recommended) ──────────────
-# Uncomment the [[d1_databases]] section in wrangler.toml.
-# No env vars needed here — D1 is configured via the binding.
-#
-# ── Production: Remote Turso (alternative) ───────────────
-# For a remote Turso DB:
-#   turso db create statsfactory
-#   turso db tokens create statsfactory
-#
-#   TURSO_DATABASE_URL=libsql://your-db-name.turso.io
-#   TURSO_AUTH_TOKEN=your-auth-token
-#
-# For production, set via wrangler secrets:
-#   wrangler secret put TURSO_DATABASE_URL
-#   wrangler secret put TURSO_AUTH_TOKEN
+# ── Dev mode ─────────────────────────────────────────────
+# Enables dev bypass for dashboard auth (no Cloudflare Access needed).
+STATSFACTORY_DEV=1
 
-TURSO_DATABASE_URL=http://127.0.0.1:8080
-TURSO_AUTH_TOKEN=unused
-
-# ── Cloudflare Access (optional) ─────────────────────────
+# ── Cloudflare Access (production only) ──────────────────
 # When set, the cfAccessAuth middleware requires a valid
 # Cf-Access-Authenticated-User-Email header on query and
 # management routes.
-# When absent (local dev), auth is bypassed with dev@localhost.
+# When absent (and STATSFACTORY_DEV=1), auth is bypassed with dev@localhost.
 #
 # For production, set via wrangler secrets:
 #   wrangler secret put CF_ACCESS_TEAM_DOMAIN

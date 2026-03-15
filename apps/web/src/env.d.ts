@@ -1,9 +1,7 @@
 /// <reference path="../.astro/types.d.ts" />
 
 interface CloudflareEnv {
-  DB?: D1Database;
-  TURSO_DATABASE_URL?: string;
-  TURSO_AUTH_TOKEN?: string;
+  DB: D1Database;
   ASSETS: Fetcher;
 }
 

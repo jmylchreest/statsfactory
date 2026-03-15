@@ -1,92 +1,65 @@
 /**
  * Integration test: sends events through the API and verifies ingestion.
  *
- * This test starts a local libSQL HTTP server (dev-db), pushes the schema,
- * seeds an app with an API key, sends events via the Hono app, and queries
- * back to verify everything was stored correctly.
- *
- * Requires: bun (for the local dev-db server)
+ * Uses Miniflare to create a real D1 database binding backed by in-memory
+ * SQLite. Seeds an app with an API key, sends events via the Hono app,
+ * and queries back to verify everything was stored correctly.
  *
  * Run: `bun run test -- src/api/integration.test.ts`
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { spawn, type ChildProcess } from "node:child_process";
-import { createClient } from "@libsql/client";
-import { drizzle } from "drizzle-orm/libsql";
+import { Miniflare } from "miniflare";
 import * as schema from "../db/schema";
 import { ulid } from "./lib/ulid";
 import { generateApiKey } from "./lib/crypto";
 import app from "./index";
 
-// ── Test configuration ──────────────────────────────────────────────────────
-
-const TEST_DB_PORT = 18_765; // unlikely to collide
-const TEST_DB_FILE = `test-integration-${Date.now()}.db`;
-const TEST_DB_URL = `http://127.0.0.1:${TEST_DB_PORT}`;
-
 // ── State ───────────────────────────────────────────────────────────────────
 
-let dbProcess: ChildProcess;
+let mf: Miniflare;
+let d1: D1Database;
 let testAppId: string;
 let testApiKey: string;
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-/** Wait for the dev-db server to become healthy. */
-async function waitForServer(url: string, timeoutMs = 10_000): Promise<void> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    try {
-      const res = await fetch(`${url}/health`);
-      if (res.ok) return;
-    } catch {
-      // Not ready yet
-    }
-    await new Promise((r) => setTimeout(r, 200));
-  }
-  throw new Error(`Server at ${url} did not become healthy within ${timeoutMs}ms`);
-}
-
-/** Make a request to the Hono app with the test environment bindings. */
+/** Make a request to the Hono app with the D1 binding + dev mode. */
 async function appRequest(
   path: string,
   init?: RequestInit,
 ): Promise<Response> {
   const url = new URL(path, "http://localhost");
   return app.request(url.pathname + url.search, init, {
-    TURSO_DATABASE_URL: TEST_DB_URL,
-    TURSO_AUTH_TOKEN: "unused",
+    DB: d1,
+    STATSFACTORY_DEV: "1",
   });
 }
 
 // ── Setup / Teardown ────────────────────────────────────────────────────────
 
 beforeAll(async () => {
-  // Start the local dev-db server
-  dbProcess = spawn("bun", ["run", "scripts/dev-db.ts", "--port", String(TEST_DB_PORT), "--db", TEST_DB_FILE], {
-    cwd: new URL("../..", import.meta.url).pathname,
-    stdio: ["ignore", "pipe", "pipe"],
+  // Create a Miniflare instance with an in-memory D1 database
+  mf = new Miniflare({
+    modules: true,
+    script: "export default { fetch() { return new Response('ok'); } }",
+    d1Databases: { DB: "test-db-id" },
   });
 
-  // Wait for it to be healthy
-  await waitForServer(TEST_DB_URL);
+  d1 = await mf.getD1Database("DB");
 
-  // Push schema using a direct SQLite client
-  const directClient = createClient({ url: `file:${new URL("../../" + TEST_DB_FILE, import.meta.url).pathname}` });
-  const db = drizzle(directClient, { schema });
-
-  // Create tables by executing raw SQL (matching the Drizzle schema)
-  await directClient.executeMultiple(`
-    CREATE TABLE IF NOT EXISTS apps (
+  // Create tables by executing raw SQL (matching the D1 migration schema).
+  // Miniflare's D1 exec() can be unreliable with multi-statement strings,
+  // so we execute each statement individually via batch().
+  const stmts = [
+    `CREATE TABLE IF NOT EXISTS apps (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       geo_precision TEXT NOT NULL DEFAULT 'country',
       retention_days INTEGER NOT NULL DEFAULT 90,
       enabled_dims TEXT NOT NULL DEFAULT '[]',
       created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS app_keys (
+    )`,
+    `CREATE TABLE IF NOT EXISTS app_keys (
       id TEXT PRIMARY KEY,
       app_id TEXT NOT NULL REFERENCES apps(id),
       key_hash TEXT NOT NULL,
@@ -95,9 +68,8 @@ beforeAll(async () => {
       name TEXT NOT NULL,
       created_at TEXT NOT NULL,
       revoked_at TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS events (
+    )`,
+    `CREATE TABLE IF NOT EXISTS events (
       id TEXT PRIMARY KEY,
       app_id TEXT NOT NULL,
       event_name TEXT NOT NULL,
@@ -105,68 +77,41 @@ beforeAll(async () => {
       session_id TEXT,
       distinct_id TEXT,
       created_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_events_app_time ON events(app_id, timestamp);
-    CREATE INDEX IF NOT EXISTS idx_events_app_name_time ON events(app_id, event_name, timestamp);
-    CREATE INDEX IF NOT EXISTS idx_events_session ON events(app_id, session_id);
-
-    CREATE TABLE IF NOT EXISTS event_dimensions (
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_events_app_time ON events(app_id, timestamp)`,
+    `CREATE INDEX IF NOT EXISTS idx_events_app_name_time ON events(app_id, event_name, timestamp)`,
+    `CREATE INDEX IF NOT EXISTS idx_events_session ON events(app_id, session_id)`,
+    `CREATE TABLE IF NOT EXISTS event_dimensions (
       event_id TEXT NOT NULL REFERENCES events(id),
       dim_key TEXT NOT NULL,
       dim_value TEXT NOT NULL,
       dim_type TEXT NOT NULL DEFAULT 'string',
       PRIMARY KEY (event_id, dim_key)
-    );
-    CREATE INDEX IF NOT EXISTS idx_dims_key_value ON event_dimensions(dim_key, dim_value);
-    CREATE INDEX IF NOT EXISTS idx_dims_event ON event_dimensions(event_id);
-
-  `);
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_dims_key_value ON event_dimensions(dim_key, dim_value)`,
+    `CREATE INDEX IF NOT EXISTS idx_dims_event ON event_dimensions(event_id)`,
+  ];
+  await d1.batch(stmts.map((sql) => d1.prepare(sql)));
 
   // Seed test app + API key
   testAppId = ulid();
   const now = new Date().toISOString();
 
-  await db.insert(schema.apps).values({
-    id: testAppId,
-    name: "Integration Test App",
-    geoPrecision: "country",
-    retentionDays: 90,
-    createdAt: now,
-  });
+  await d1.prepare(
+    "INSERT INTO apps (id, name, geo_precision, retention_days, created_at) VALUES (?, ?, ?, ?, ?)"
+  ).bind(testAppId, "Integration Test App", "country", 90, now).run();
 
   const { rawKey, keyHash, keyPrefix } = await generateApiKey("live");
   testApiKey = rawKey;
 
-  await db.insert(schema.appKeys).values({
-    id: ulid(),
-    appId: testAppId,
-    keyHash,
-    keyPrefix,
-    rawKey: rawKey,
-    name: "Test key",
-    createdAt: now,
-  });
-
-  directClient.close();
+  await d1.prepare(
+    "INSERT INTO app_keys (id, app_id, key_hash, key_prefix, raw_key, name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+  ).bind(ulid(), testAppId, keyHash, keyPrefix, rawKey, "Test key", now).run();
 }, 30_000);
 
 afterAll(async () => {
-  // Kill the dev-db process
-  if (dbProcess) {
-    dbProcess.kill("SIGTERM");
-    // Wait briefly for graceful shutdown
-    await new Promise((r) => setTimeout(r, 500));
-  }
-
-  // Clean up the test database file
-  try {
-    const { unlink } = await import("node:fs/promises");
-    const dbPath = new URL("../../" + TEST_DB_FILE, import.meta.url).pathname;
-    await unlink(dbPath).catch(() => {});
-    await unlink(dbPath + "-wal").catch(() => {});
-    await unlink(dbPath + "-shm").catch(() => {});
-  } catch {
-    // Cleanup is best-effort
+  if (mf) {
+    await mf.dispose();
   }
 });
 
