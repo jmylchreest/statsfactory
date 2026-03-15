@@ -1,0 +1,26 @@
+# Local development config with D1.
+# Usage: just run  (or: bun run dev:d1)
+#
+# This is a superset of wrangler.toml with a local D1 binding enabled.
+# wrangler dev creates a local SQLite file at .wrangler/state/v3/d1/.
+# The database_id is a placeholder — only used to namespace the local file.
+#
+# Requires `astro build` first — wrangler serves the built output.
+
+name = "statsfactory"
+main = "dist/server/entry.mjs"
+compatibility_date = "2026-03-08"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "statsfactory"
+database_id = "local-dev"
+migrations_dir = "migrations"
+
+[assets]
+binding = "ASSETS"
+directory = "./dist/client"
+
+[triggers]
+crons = ["0 3 * * *"]

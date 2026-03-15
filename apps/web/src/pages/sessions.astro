@@ -1,0 +1,14 @@
+---
+import Dashboard from "../layouts/Dashboard.astro";
+import SessionTimeline from "../components/SessionTimeline";
+---
+
+<Dashboard title="Sessions — statsfactory" activePage="sessions">
+  <div class="space-y-6">
+    <div>
+      <h1 class="text-2xl font-bold tracking-tight">Sessions</h1>
+      <p class="text-gray-400 text-sm mt-1">View event sequences within sessions</p>
+    </div>
+    <SessionTimeline client:load />
+  </div>
+</Dashboard>

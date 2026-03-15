@@ -1,0 +1,14 @@
+---
+import Dashboard from "../layouts/Dashboard.astro";
+import DimensionMatrix from "../components/DimensionMatrix";
+---
+
+<Dashboard title="Dimension Matrix — statsfactory" activePage="matrix">
+  <div class="space-y-6">
+    <div>
+      <h1 class="text-2xl font-bold tracking-tight">Dimension Matrix</h1>
+      <p class="text-gray-400 text-sm mt-1">Cross-tabulate 2+ dimensions to find patterns</p>
+    </div>
+    <DimensionMatrix client:load />
+  </div>
+</Dashboard>

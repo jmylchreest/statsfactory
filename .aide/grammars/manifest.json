@@ -1,0 +1,46 @@
+{
+  "aide_version": "snapshot",
+  "abi_version": 0,
+  "grammars": {
+    "bash": {
+      "version": "snapshot",
+      "file": "bash/grammar.so",
+      "sha256": "f895e4d7129ee9bd8b0b8ff0aba4935321c7a559618f42ed6ce2cd4e536936aa",
+      "c_symbol": "tree_sitter_bash",
+      "has_pack": true,
+      "installed_at": "2026-03-15T08:37:38.431638835Z"
+    },
+    "css": {
+      "version": "snapshot",
+      "file": "css/grammar.so",
+      "sha256": "746ce0251d198a8d65609e21c16343ebdb544f4dccf1a42cf4a3e6c607e31cd5",
+      "c_symbol": "tree_sitter_css",
+      "has_pack": true,
+      "installed_at": "2026-03-15T00:25:20.543574904Z"
+    },
+    "sql": {
+      "version": "snapshot",
+      "file": "sql/grammar.so",
+      "sha256": "510766040da52128084dc44d951ad79bcaeffc720449b3c3bcc74ed223f6fff3",
+      "c_symbol": "tree_sitter_sql",
+      "has_pack": true,
+      "installed_at": "2026-03-15T18:16:45.498446049Z"
+    },
+    "toml": {
+      "version": "snapshot",
+      "file": "toml/grammar.so",
+      "sha256": "6cf0da6125339a5e405bc1ce59b81fd861032574ce546d84d68a20d9f2f0ce61",
+      "c_symbol": "tree_sitter_toml",
+      "has_pack": true,
+      "installed_at": "2026-03-15T00:25:20.212743004Z"
+    },
+    "yaml": {
+      "version": "snapshot",
+      "file": "yaml/grammar.so",
+      "sha256": "e20db4b44dc9a3c459fa6c099496a2b43c8dac6aa88ce3e8e26bcbf9d8d9ddd7",
+      "c_symbol": "tree_sitter_yaml",
+      "has_pack": true,
+      "installed_at": "2026-03-15T18:20:11.610739637Z"
+    }
+  }
+}

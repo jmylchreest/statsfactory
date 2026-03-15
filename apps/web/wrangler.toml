@@ -1,0 +1,36 @@
+name = "statsfactory"
+compatibility_date = "2026-03-12"
+compatibility_flags = ["nodejs_compat"]
+
+# ── Database ─────────────────────────────────────────────────────────────────
+# D1 (recommended — zero latency, generous free tier).
+# For local dev: the deploy script or `just init` creates a local D1 database.
+# For production: `wrangler d1 create statsfactory` and paste the database_id.
+[[d1_databases]]
+binding = "DB"
+database_name = "statsfactory"
+database_id = "local-dev"
+migrations_dir = "migrations"
+# ⬆ Replace "local-dev" with your real database_id for production.
+#   The deploy script handles this automatically.
+#
+# Alternative: Turso / libSQL (portable, no vendor lock-in).
+# Comment out the [[d1_databases]] block above, then set secrets:
+#   wrangler secret put TURSO_DATABASE_URL
+#   wrangler secret put TURSO_AUTH_TOKEN
+
+[vars]
+# Non-secret environment variables.
+# For production, set secrets via `wrangler secret put`:
+#   wrangler secret put CF_ACCESS_TEAM_DOMAIN
+# For local dev, copy .dev.vars.example to .dev.vars (picked up automatically by wrangler).
+
+[assets]
+binding = "ASSETS"
+directory = "./dist"
+
+# Data retention cron — runs daily at 03:00 UTC.
+# Invokes the scheduled handler which calls POST /v1/cron/retention internally.
+# In dev mode: `wrangler dev --test-scheduled`, then curl http://localhost:8787/__scheduled
+[triggers]
+crons = ["0 3 * * *"]

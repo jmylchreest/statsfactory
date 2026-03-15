@@ -1,0 +1,7 @@
+@import "tailwindcss";
+
+/* Recharts renders SVG with a default white surface — force transparent */
+.recharts-surface,
+.recharts-wrapper {
+  background: transparent !important;
+}

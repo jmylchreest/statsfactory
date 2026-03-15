@@ -1,0 +1,18 @@
+{
+  "private": true,
+  "name": "statsfactory",
+  "description": "Privacy-first analytics platform with multi-dimension querying",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "test": "turbo test",
+    "lint": "turbo lint",
+    "clean": "turbo clean"
+  },
+  "devDependencies": {
+    "turbo": "^2"
+  },
+  "trustedDependencies": ["esbuild", "sharp", "workerd"],
+  "packageManager": "bun@1.3.10"
+}
