@@ -146,18 +146,31 @@ queryRouter.openapi(dimensionsRoute, async (c) => {
     return c.json({ error: '"from" must be before "to"' }, 400);
   }
 
+  // Normalize event_name to array (supports ?event_name=a&event_name=b)
+  const rawEvents = query.event_name;
+  const eventNames = Array.isArray(rawEvents)
+    ? rawEvents
+    : rawEvents
+      ? [rawEvents]
+      : [];
+
   const db = c.get("db");
 
   try {
     const dimensions = await queryDimensionKeys(db, appId, {
-      eventName: query.event_name,
+      eventNames: eventNames.length > 0 ? eventNames : undefined,
       from,
       to,
     });
     return c.json({
       dimensions,
       meta: {
-        event_name: query.event_name ?? null,
+        event_name:
+          eventNames.length === 0
+            ? null
+            : eventNames.length === 1
+              ? eventNames[0]
+              : eventNames,
         from: from ?? null,
         to: to ?? null,
       },
@@ -252,7 +265,7 @@ const matrixRoute = createRoute({
   tags: ["Query"],
   summary: "Multi-dimension cross-tabulation",
   description:
-    "Returns event counts cross-tabulated across 2+ dimension keys. Supports multiple event types (event_name is auto-added as a dimension). Requires raw event scan. Protected by Cloudflare Access.",
+    "Returns event counts cross-tabulated across 2+ dimension keys. Supports multiple event types — include 'event_name' as a dimension to group by event type. Requires raw event scan. Protected by Cloudflare Access.",
   security: [{ CfAccess: [] }],
   request: {
     query: MatrixQuerySchema,
@@ -285,15 +298,11 @@ queryRouter.openapi(matrixRoute, async (c) => {
   }
 
   // dimensions can be string or string[]
+  // event_name can be included as a dimension by the client to group by event type
   const rawDims = query.dimensions;
   const dimensions = Array.isArray(rawDims) ? rawDims : rawDims ? [rawDims] : [];
 
-  // When multiple events are selected, auto-inject event_name as a dimension
-  const effectiveDims = eventNames.length > 1
-    ? ["event_name", ...dimensions.filter((d) => d !== "event_name")]
-    : dimensions;
-
-  if (effectiveDims.length < 2) {
+  if (dimensions.length < 2) {
     return c.json({ error: 'At least 2 "dimensions" are required' }, 400);
   }
 
@@ -316,7 +325,7 @@ queryRouter.openapi(matrixRoute, async (c) => {
   try {
     const rows = await queryMatrix(db, appId, {
       eventNames,
-      dimensions: effectiveDims,
+      dimensions,
       from,
       to,
       filters,
@@ -326,7 +335,7 @@ queryRouter.openapi(matrixRoute, async (c) => {
       matrix: rows,
       meta: {
         event_name: eventNames.length === 1 ? eventNames[0] : eventNames,
-        dimensions: effectiveDims,
+        dimensions,
         from,
         to,
         filters,

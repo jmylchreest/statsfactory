@@ -178,10 +178,12 @@ export async function queryTopEvents(
 export type DimensionKey = {
   dimKey: string;
   distinctValues: number;
+  eventTypes: string[];
 };
 
 /**
- * List distinct dimension keys (and count of distinct values) for an event type.
+ * List distinct dimension keys (and count of distinct values) for event type(s).
+ * Also returns which event types each dimension appears on.
  */
 export async function queryDimensionKeys(
   db: Database,
@@ -189,7 +191,13 @@ export async function queryDimensionKeys(
   params: DimensionsQueryParams,
 ): Promise<DimensionKey[]> {
   const conditions = [eq(events.appId, appId)];
-  if (params.eventName) conditions.push(eq(events.eventName, params.eventName));
+  if (params.eventNames && params.eventNames.length > 0) {
+    if (params.eventNames.length === 1) {
+      conditions.push(eq(events.eventName, params.eventNames[0]));
+    } else {
+      conditions.push(inArray(events.eventName, params.eventNames));
+    }
+  }
   if (params.from) conditions.push(gte(events.timestamp, params.from));
   if (params.to) conditions.push(lte(events.timestamp, params.to));
 
@@ -197,6 +205,7 @@ export async function queryDimensionKeys(
     .select({
       dimKey: eventDimensions.dimKey,
       distinctValues: sql<number>`count(distinct ${eventDimensions.dimValue})`,
+      eventTypesRaw: sql<string>`group_concat(distinct ${events.eventName})`,
     })
     .from(eventDimensions)
     .innerJoin(events, eq(eventDimensions.eventId, events.id))
@@ -207,6 +216,7 @@ export async function queryDimensionKeys(
   return rows.map((r) => ({
     dimKey: r.dimKey,
     distinctValues: Number(r.distinctValues),
+    eventTypes: r.eventTypesRaw ? String(r.eventTypesRaw).split(",") : [],
   }));
 }
 

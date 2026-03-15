@@ -396,9 +396,10 @@ describe("Integration: Event Ingestion Pipeline", () => {
       }),
     });
 
-    // Query with multiple event_name params — backend should auto-add event_name as dimension
+    // Query with multiple event_name params and event_name explicitly as a dimension
+    // (auto-injection was removed — frontend controls which dimensions are in the query)
     const res = await appRequest(
-      `/v1/query/matrix?app_id=${testAppId}&event_name=plugin_used&event_name=plugin_installed&dimensions=plugin.name&from=2026-03-01T00:00:00Z&to=2026-03-31T00:00:00Z`,
+      `/v1/query/matrix?app_id=${testAppId}&event_name=plugin_used&event_name=plugin_installed&dimensions=event_name&dimensions=plugin.name&from=2026-03-01T00:00:00Z&to=2026-03-31T00:00:00Z`,
     );
 
     expect(res.status).toBe(200);

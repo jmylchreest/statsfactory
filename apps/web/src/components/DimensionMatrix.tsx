@@ -208,6 +208,12 @@ export default function DimensionMatrix() {
   const [selectedDims, setSelectedDims] = useState<string[]>([]);
   const [loadingDims, setLoadingDims] = useState(false);
 
+  // Drag state for reordering selected dims
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
+
+  // Dimension picker sort order
+  const [dimSort, setDimSort] = useState<"count-desc" | "count-asc" | "alpha-asc" | "alpha-desc">("count-desc");
+
   // Filters
   const [filters, setFilters] = useState<{ key: string; value: string }[]>([]);
   const [filterKey, setFilterKey] = useState("");
@@ -260,7 +266,7 @@ export default function DimensionMatrix() {
         "/v1/query/dimensions",
         {
           app_id: appId,
-          event_name: selectedEvents[0],
+          event_name: selectedEvents,
           from: isoFrom,
           to: isoTo,
         },
@@ -276,9 +282,9 @@ export default function DimensionMatrix() {
     }
   }, [appId, selectedEvents, isoFrom, isoTo]);
 
-  // When multiple events are selected, backend auto-adds event_name as a dimension,
-  // so we only need 1 user-selected dim. Otherwise we need 2.
-  const minDims = selectedEvents.length > 1 ? 1 : 2;
+  // Always need at least 2 dimensions for cross-tabulation.
+  // event_name counts as a dimension when selected.
+  const minDims = 2;
 
   const fetchMatrix = useCallback(async () => {
     if (!appId || selectedEvents.length === 0 || selectedDims.length < minDims) {
@@ -346,6 +352,44 @@ export default function DimensionMatrix() {
     (d) => selectedDims.includes(d.dimKey) && !filters.some((f) => f.key === d.dimKey),
   );
 
+  // When multiple events are selected, inject a virtual "event_name" dimension
+  // so users can optionally group by event type (and drag it to control pivot order)
+  const displayDims: DimensionKey[] = (() => {
+    if (selectedEvents.length <= 1) return availableDims;
+    const hasEventName = availableDims.some((d) => d.dimKey === "event_name");
+    if (hasEventName) return availableDims;
+    return [
+      {
+        dimKey: "event_name",
+        distinctValues: selectedEvents.length,
+        eventTypes: [...selectedEvents],
+      },
+      ...availableDims,
+    ];
+  })();
+
+  // ── Drag reorder handlers ──────────────────────────────────────────────
+
+  function handleDragStart(idx: number) {
+    setDragIdx(idx);
+  }
+
+  function handleDragOver(e: React.DragEvent, idx: number) {
+    e.preventDefault();
+    if (dragIdx === null || dragIdx === idx) return;
+    setSelectedDims((prev) => {
+      const next = [...prev];
+      const [moved] = next.splice(dragIdx, 1);
+      next.splice(idx, 0, moved);
+      return next;
+    });
+    setDragIdx(idx);
+  }
+
+  function handleDragEnd() {
+    setDragIdx(null);
+  }
+
   // ── Sort ────────────────────────────────────────────────────────────────
 
   const sortedMatrix = [...matrix].sort((a, b) => {
@@ -369,10 +413,9 @@ export default function DimensionMatrix() {
     );
   }
 
-  // Columns: when multi-event, backend adds event_name as first dimension
-  const effectiveDims = selectedEvents.length > 1
-    ? ["event_name", ...selectedDims.filter((d) => d !== "event_name")]
-    : selectedDims;
+  // Columns: selectedDims order is user-controlled (via drag reorder).
+  // event_name is just another dimension when selected.
+  const effectiveDims = selectedDims;
   const columns = [...effectiveDims, "count"];
 
   // ── Chart data ──────────────────────────────────────────────────────────
@@ -418,9 +461,21 @@ export default function DimensionMatrix() {
             {loadingEvents && (
               <span className="ml-2 text-gray-600 font-normal">loading...</span>
             )}
-            {selectedEvents.length > 1 && (
-              <span className="ml-2 text-xs text-blue-400 font-normal">
-                multi-event mode — event_name added as dimension
+            {eventNames.length > 1 && (
+              <span className="ml-2 text-xs font-normal">
+                <button
+                  onClick={() => setSelectedEvents([...eventNames])}
+                  className="text-blue-400 hover:text-blue-300 transition-colors"
+                >
+                  all
+                </button>
+                <span className="text-gray-600 mx-1">/</span>
+                <button
+                  onClick={() => setSelectedEvents([])}
+                  className="text-blue-400 hover:text-blue-300 transition-colors"
+                >
+                  none
+                </button>
               </span>
             )}
           </h2>
@@ -470,37 +525,151 @@ export default function DimensionMatrix() {
         <div className="space-y-4">
           {/* ── Dimension selector chips ──────────────────────────────── */}
           <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">
-            <h2 className="text-sm font-medium text-gray-300 mb-2">
-              Select dimensions to cross-tabulate
-              {loadingDims && (
-                <span className="ml-2 text-gray-600 font-normal">loading...</span>
-              )}
-            </h2>
-            <div className="flex flex-wrap gap-2">
-              {availableDims.map((dim) => {
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-sm font-medium text-gray-300">
+                Select dimensions to cross-tabulate
+                {loadingDims && (
+                  <span className="ml-2 text-gray-600 font-normal">loading...</span>
+                )}
+              </h2>
+              {/* Sort controls */}
+              <select
+                value={dimSort}
+                onChange={(e) => setDimSort(e.target.value as typeof dimSort)}
+                className="rounded-md bg-gray-800 border border-gray-700 px-2 py-1 text-xs text-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              >
+                <option value="count-desc">most events first</option>
+                <option value="count-asc">fewest events first</option>
+                <option value="alpha-asc">A → Z</option>
+                <option value="alpha-desc">Z → A</option>
+              </select>
+            </div>
+            {(() => {
+              // Sort displayDims according to selected sort order
+              const sortDims = (dims: DimensionKey[]) => {
+                const sorted = [...dims];
+                switch (dimSort) {
+                  case "count-desc":
+                    return sorted.sort((a, b) => b.distinctValues - a.distinctValues);
+                  case "count-asc":
+                    return sorted.sort((a, b) => a.distinctValues - b.distinctValues);
+                  case "alpha-asc":
+                    return sorted.sort((a, b) => a.dimKey.localeCompare(b.dimKey));
+                  case "alpha-desc":
+                    return sorted.sort((a, b) => b.dimKey.localeCompare(a.dimKey));
+                  default:
+                    return sorted;
+                }
+              };
+
+              // Group dimensions by their event type(s)
+              const groups = new Map<string, DimensionKey[]>();
+              for (const dim of displayDims) {
+                const key = dim.eventTypes.slice().sort().join(", ");
+                const list = groups.get(key) ?? [];
+                list.push(dim);
+                groups.set(key, list);
+              }
+              // Sort groups: shared (multiple events) first, then alphabetically
+              const sortedGroups = [...groups.entries()].sort(([a], [b]) => {
+                const aMulti = a.includes(",") ? 0 : 1;
+                const bMulti = b.includes(",") ? 0 : 1;
+                return aMulti - bMulti || a.localeCompare(b);
+              });
+
+              const renderChip = (dim: DimensionKey) => {
                 const isSelected = selectedDims.includes(dim.dimKey);
+                const isVirtual = dim.dimKey === "event_name";
                 return (
                   <button
                     key={dim.dimKey}
                     onClick={() => toggleDim(dim.dimKey)}
                     className={`rounded-full px-3 py-1 text-xs font-mono transition-colors ${
                       isSelected
-                        ? "bg-blue-600 text-white"
-                        : "bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200"
+                        ? isVirtual
+                          ? "bg-purple-600 text-white"
+                          : "bg-blue-600 text-white"
+                        : isVirtual
+                          ? "bg-purple-900/40 text-purple-300 border border-purple-700/50 hover:bg-purple-800/40 hover:text-purple-200"
+                          : "bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200"
                     }`}
                   >
                     {dim.dimKey}
-                    <span className="ml-1 text-gray-500 font-sans">
+                    <span className={`ml-1 font-sans ${isVirtual ? "text-purple-400" : "text-gray-500"}`}>
                       ({dim.distinctValues})
                     </span>
                   </button>
                 );
-              })}
-            </div>
+              };
+
+              // If only one event or one group, render flat (no group labels)
+              if (sortedGroups.length <= 1) {
+                return (
+                  <div className="flex flex-wrap gap-2">
+                    {sortDims(displayDims).map(renderChip)}
+                  </div>
+                );
+              }
+
+              return (
+                <div className="space-y-3">
+                  {sortedGroups.map(([groupLabel, dims]) => (
+                    <div key={groupLabel}>
+                      <p className="text-xs text-gray-500 mb-1.5 font-sans">
+                        {groupLabel}
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {sortDims(dims).map(renderChip)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
             {selectedDims.length > 0 && selectedDims.length < minDims && (
               <p className="text-xs text-yellow-500 mt-2">
                 Select at least {minDims} dimension{minDims > 1 ? "s" : ""} to generate the matrix.
               </p>
+            )}
+
+            {/* ── Pivot order strip (drag to reorder) ───────────────── */}
+            {selectedDims.length >= 2 && (
+              <div className="mt-3 pt-3 border-t border-gray-800">
+                <p className="text-xs text-gray-500 mb-2 font-sans">
+                  Pivot order <span className="text-gray-600">— drag to reorder</span>
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {selectedDims.map((dimKey, idx) => {
+                    const isVirtual = dimKey === "event_name";
+                    return (
+                      <div
+                        key={dimKey}
+                        draggable
+                        onDragStart={() => handleDragStart(idx)}
+                        onDragOver={(e) => handleDragOver(e, idx)}
+                        onDragEnd={handleDragEnd}
+                        className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-mono cursor-grab active:cursor-grabbing select-none transition-colors ${
+                          dragIdx === idx
+                            ? "ring-1 ring-blue-400 opacity-60"
+                            : ""
+                        } ${
+                          isVirtual
+                            ? "bg-purple-600/30 text-purple-200 border border-purple-700/50"
+                            : "bg-blue-600/30 text-blue-200 border border-blue-700/50"
+                        }`}
+                      >
+                        <span className="text-gray-500 cursor-grab" title="Drag to reorder">
+                          &#x2630;
+                        </span>
+                        <span className="text-gray-500 font-sans text-[10px] tabular-nums w-3 text-center">
+                          {idx + 1}
+                        </span>
+                        {dimKey}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             )}
           </div>
 
@@ -589,11 +758,30 @@ export default function DimensionMatrix() {
             <div className="text-sm text-gray-500">Loading matrix...</div>
           )}
 
-          {selectedDims.length >= minDims && !loadingMatrix && matrix.length === 0 && (
-            <div className="rounded-lg border border-gray-800 bg-gray-900 p-6 text-center text-sm text-gray-500">
-              No results for this combination.
-            </div>
-          )}
+          {selectedDims.length >= minDims && !loadingMatrix && matrix.length === 0 && (() => {
+            // Detect cross-event-type dimension selection:
+            // If no single event type contains all selected dims, explain why results are empty.
+            const selectedDimMetas = availableDims.filter((d) => selectedDims.includes(d.dimKey));
+            const allEventTypes = new Set(selectedDimMetas.flatMap((d) => d.eventTypes));
+            const sharedEventType = [...allEventTypes].some((et) =>
+              selectedDimMetas.every((d) => d.eventTypes.includes(et)),
+            );
+            return (
+              <div className="rounded-lg border border-gray-800 bg-gray-900 p-6 text-center text-sm text-gray-500">
+                {!sharedEventType ? (
+                  <>
+                    <p className="mb-2">No results — the selected dimensions come from different event types.</p>
+                    <p className="text-xs text-gray-600">
+                      Cross-tabulation requires dimensions that co-occur on the same event.
+                      Try selecting dimensions that belong to a common event type.
+                    </p>
+                  </>
+                ) : (
+                  "No results for this combination."
+                )}
+              </div>
+            );
+          })()}
 
           {sortedMatrix.length > 0 && (
             <div className="rounded-lg border border-gray-800 bg-gray-900 p-4 space-y-4">

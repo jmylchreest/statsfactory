@@ -212,10 +212,14 @@ export const DimensionsQuerySchema = z
       example: "01J1ABCDE...",
       description: "App ID to query (ULID, required).",
     }),
-    event_name: z.string().optional().openapi({
-      example: "page_view",
-      description: "Filter to a specific event type.",
-    }),
+    event_name: z
+      .union([z.string(), z.array(z.string())])
+      .optional()
+      .openapi({
+        example: "page_view",
+        description:
+          "Filter to specific event type(s). Repeat for multiple (e.g. ?event_name=a&event_name=b).",
+      }),
     from: z.string().datetime({ offset: true }).optional().openapi({
       example: "2026-03-01T00:00:00Z",
       description: "Start date (ISO 8601, optional).",
@@ -230,9 +234,14 @@ export const DimensionsQuerySchema = z
 /** Response for GET /v1/query/dimensions. */
 export const DimensionsResponseSchema = z
   .object({
-    dimensions: z.array(z.object({ dim_key: z.string() })),
+    dimensions: z.array(
+      z.object({
+        dim_key: z.string(),
+        event_types: z.array(z.string()),
+      }),
+    ),
     meta: z.object({
-      event_name: z.string().nullable(),
+      event_name: z.union([z.string(), z.array(z.string())]).nullable(),
       from: z.string().nullable(),
       to: z.string().nullable(),
     }),
@@ -734,7 +743,7 @@ export type EventsQueryParams = {
 };
 
 export type DimensionsQueryParams = {
-  eventName?: string;
+  eventNames?: string[];
   from?: string;
   to?: string;
 };

@@ -59,19 +59,13 @@ export const cfAccessAuth = createMiddleware<AppEnv>(async (c, next) => {
   const teamDomain = c.env.CF_ACCESS_TEAM_DOMAIN;
 
   if (!teamDomain) {
-    // Only allow dev bypass when explicitly opted in via STATSFACTORY_DEV=1.
+    // Only allow dev bypass when explicitly opted in via STATSFACTORY_DEV.
     // In production (Cloudflare Workers), fail closed — reject all requests
     // if CF_ACCESS_TEAM_DOMAIN is not configured.
-    const isDev = (c.env as Record<string, unknown>).STATSFACTORY_DEV === "1";
-
-    if (!isDev) {
-      return c.json(
-        {
-          error:
-            "Dashboard authentication is not configured. Set CF_ACCESS_TEAM_DOMAIN to enable Cloudflare Access.",
-        },
-        503,
-      );
+    // Env vars are always strings, so treat "0", "false", "no", "" as disabled.
+    const devFlag = c.env.STATSFACTORY_DEV?.toLowerCase();
+    if (!devFlag || devFlag === "0" || devFlag === "false" || devFlag === "no") {
+      return c.json({ error: "Forbidden" }, 403);
     }
 
     // Local dev: allow all requests with a synthetic identity

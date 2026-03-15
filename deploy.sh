@@ -74,7 +74,7 @@ cmd_install() {
     echo ""
   fi
   [[ -n "$team_domain" ]] || die "CF_ACCESS_TEAM_DOMAIN is required."
-  echo "$team_domain" | wrangler secret put CF_ACCESS_TEAM_DOMAIN
+  echo "$team_domain" | (cd "${WEB_DIR}" && wrangler secret put CF_ACCESS_TEAM_DOMAIN)
 
   # 5. Build and deploy
   info "Building..."

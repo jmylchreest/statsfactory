@@ -1,6 +1,8 @@
 name = "statsfactory"
 compatibility_date = "2026-03-12"
 compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+preview_urls = false
 
 # ── Database ─────────────────────────────────────────────────────────────────
 # D1 — zero latency, colocated with the Worker.
@@ -9,7 +11,7 @@ compatibility_flags = ["nodejs_compat"]
 [[d1_databases]]
 binding = "DB"
 database_name = "statsfactory"
-database_id = "local-dev"
+database_id = "51c962c3-45b9-467c-baae-588a9bd7027f"
 migrations_dir = "migrations"
 # ⬆ Replace "local-dev" with your real database_id for production.
 #   The deploy script handles this automatically.

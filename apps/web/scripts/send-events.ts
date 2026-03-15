@@ -113,6 +113,31 @@ const EVENT_POOL: { event: string; dims: () => Record<string, string | number | 
   },
 ];
 
+// ── Synthetic enriched dimensions (simulates server-side enrichment for local dev) ──
+
+const FAKE_COUNTRIES = ["US", "GB", "DE", "FR", "JP", "AU", "CA", "BR", "IN", "NL"];
+const FAKE_BROWSERS = ["Chrome", "Firefox", "Safari", "Edge"];
+const FAKE_BROWSER_VERSIONS: Record<string, string[]> = {
+  Chrome: ["130", "129", "128"], Firefox: ["133", "132"], Safari: ["18", "17"], Edge: ["130", "129"],
+};
+const FAKE_OS = ["Windows", "macOS", "Linux", "iOS", "Android"];
+const FAKE_DEVICE_TYPES = ["desktop", "desktop", "desktop", "mobile", "mobile", "tablet"]; // weighted
+
+function pick<T>(arr: T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function syntheticEnrichedDims(): Record<string, string> {
+  const browser = pick(FAKE_BROWSERS);
+  return {
+    "geo.country": pick(FAKE_COUNTRIES),
+    "client.browser": browser,
+    "client.browser_version": pick(FAKE_BROWSER_VERSIONS[browser]),
+    "client.os": pick(FAKE_OS),
+    "client.device_type": pick(FAKE_DEVICE_TYPES),
+  };
+}
+
 // ── Generate events ─────────────────────────────────────────────────
 
 const count = countArg ? parseInt(countArg, 10) : Math.floor(Math.random() * 9) + 2; // 2-10
@@ -138,7 +163,10 @@ for (let i = 0; i < count; i++) {
     event: pool.event,
     timestamp: ts,
     session_id: sessionId,
-    dimensions: pool.dims(),
+    dimensions: {
+      ...syntheticEnrichedDims(),
+      ...pool.dims(), // user dims override enriched (same precedence as server)
+    },
   });
 }
 

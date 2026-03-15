@@ -27,12 +27,13 @@ export interface EventsQueryResponse {
 export interface DimensionKey {
   dimKey: string;
   distinctValues: number;
+  eventTypes: string[];
 }
 
 export interface DimensionsQueryResponse {
   dimensions: DimensionKey[];
   meta: {
-    event_name: string | null;
+    event_name: string | string[] | null;
     from: string | null;
     to: string | null;
   };

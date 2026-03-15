@@ -7,6 +7,9 @@ worktrees/
 memory/
 code/
 
+# Tree-sitter grammars - platform-specific compiled binaries
+grammars/
+
 # MCP sync state - machine-specific
 config/mcp.json
 config/mcp-sync.journal.json

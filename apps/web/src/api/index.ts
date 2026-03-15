@@ -16,6 +16,7 @@ export type AppEnv = {
   Bindings: {
     DB: D1Database;
     CF_ACCESS_TEAM_DOMAIN?: string;
+    STATSFACTORY_DEV?: string;
   };
   Variables: {
     db: Database;

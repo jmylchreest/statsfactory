@@ -14,5 +14,6 @@ export const ALL: APIRoute = (context) => {
   return app.fetch(context.request, {
     DB: env.DB,
     CF_ACCESS_TEAM_DOMAIN: env.CF_ACCESS_TEAM_DOMAIN,
+    STATSFACTORY_DEV: env.STATSFACTORY_DEV,
   });
 };
