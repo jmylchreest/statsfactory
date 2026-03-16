@@ -6,14 +6,19 @@
  * to wrangler (via bunx) for build/deploy/migrations.
  *
  * Usage:
- *   bun run scripts/deploy.ts install
- *   bun run scripts/deploy.ts upgrade
- *   bun run scripts/deploy.ts destroy
+ *   bun run scripts/deploy.ts install [--name <instance>]
+ *   bun run scripts/deploy.ts upgrade [--name <instance>]
+ *   bun run scripts/deploy.ts destroy [--name <instance>]
+ *
+ * The --name flag (or STATSFACTORY_NAME env var) allows multiple independent
+ * instances. Default is "statsfactory". With --name prod the worker becomes
+ * "statsfactory-prod", the D1 database "statsfactory-prod", etc.
  *
  * Environment variables (optional — prompts if not set):
- *   CLOUDFLARE_API_TOKEN      API token: Zone > Access: Apps and Policies > Edit
+ *   CLOUDFLARE_API_TOKEN      API token (see README for required permissions)
  *   CF_ACCESS_TEAM_DOMAIN     Cloudflare Access team domain
  *   STATSFACTORY_DOMAIN       Custom domain (e.g. stats.example.com)
+ *   STATSFACTORY_NAME         Instance name (same as --name flag)
  */
 
 import Cloudflare from "cloudflare";
@@ -24,10 +29,29 @@ import { createInterface } from "readline";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-const WORKER_NAME = "statsfactory";
-const DB_NAME = "statsfactory";
 const WEB_DIR = "apps/web";
 const WRANGLER_TOML = join(WEB_DIR, "wrangler.toml");
+
+// ── Instance naming ───────────────────────────────────────────────────────
+//
+// --name <instance> or STATSFACTORY_NAME env var.  Default is bare
+// "statsfactory".  With --name prod → worker "statsfactory-prod",
+// D1 "statsfactory-prod", Access apps "statsfactory-prod-*", and
+// deploy config "wrangler-deploy-prod.toml".
+
+function parseInstanceName(): string {
+  const args = process.argv.slice(2);
+  const idx = args.indexOf("--name");
+  if (idx !== -1 && args[idx + 1]) return args[idx + 1];
+  return process.env.STATSFACTORY_NAME || "";
+}
+
+const INSTANCE_SUFFIX = parseInstanceName();
+const WORKER_NAME = INSTANCE_SUFFIX ? `statsfactory-${INSTANCE_SUFFIX}` : "statsfactory";
+const DB_NAME = WORKER_NAME; // worker and DB share the same name
+const DEPLOY_TOML = INSTANCE_SUFFIX
+  ? join(WEB_DIR, `wrangler-deploy-${INSTANCE_SUFFIX}.toml`)
+  : join(WEB_DIR, "wrangler-deploy.toml");
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -317,14 +341,12 @@ async function ensureSecret(accountId: string, name: string, value: string): Pro
   info(`Secret '${name}' set.`);
 }
 
-// ── Deploy config (wrangler-deploy.toml) ───────────────────────────────────
+// ── Deploy config (wrangler-deploy[-name].toml) ────────────────────────────
 //
 // Deploy-specific values (database_id, custom domain) live in a gitignored
-// file: apps/web/wrangler-deploy.toml.  Before running wrangler we patch
-// wrangler.toml with those values and restore it afterwards so the tracked
-// file stays clean.
-
-const DEPLOY_TOML = join(WEB_DIR, "wrangler-deploy.toml");
+// file (DEPLOY_TOML, set above based on --name).  Before running wrangler
+// we patch wrangler.toml with those values and restore it afterwards so the
+// tracked file stays clean.
 
 interface DeployConfig {
   database_id: string;
@@ -379,8 +401,12 @@ function patchTomlForDeploy(): void {
 
   let toml = clean;
 
-  // Patch database_id
+  // Patch worker name (for multi-instance support)
+  toml = toml.replace(/^name = "[^"]*"/m, `name = "${WORKER_NAME}"`);
+
+  // Patch database_id and database_name
   toml = toml.replace(/database_id = "[^"]*"/, `database_id = "${config.database_id}"`);
+  toml = toml.replace(/database_name = "[^"]*"/, `database_name = "${DB_NAME}"`);
 
   // Patch custom domain — replace the # DEPLOY:ROUTES placeholder
   if (config.domain) {
@@ -478,7 +504,7 @@ async function setupAccess({ domain, zoneId }: AccessSetupOptions): Promise<void
   info(`Creating Access application for '${domain}'...`);
   const app = await client.zeroTrust.access.applications.create({
     zone_id: zoneId,
-    name: "statsfactory",
+    name: WORKER_NAME,
     domain,
     type: "self_hosted",
     session_duration: "24h",
@@ -492,7 +518,7 @@ async function setupAccess({ domain, zoneId }: AccessSetupOptions): Promise<void
   info("Creating allow policy...");
   await client.zeroTrust.access.applications.policies.create(app.id, {
     zone_id: zoneId,
-    name: "statsfactory-allow",
+    name: `${WORKER_NAME}-allow`,
     decision: "allow",
     include: includeRules,
     precedence: 1,
@@ -501,9 +527,9 @@ async function setupAccess({ domain, zoneId }: AccessSetupOptions): Promise<void
 
   // Create bypass apps for public endpoints
   const publicPaths = [
-    { path: "/v1/events", name: "statsfactory-ingest" },
-    { path: "/v1/health", name: "statsfactory-health" },
-    { path: "/v1/doc", name: "statsfactory-docs" },
+    { path: "/v1/events", name: `${WORKER_NAME}-ingest` },
+    { path: "/v1/health", name: `${WORKER_NAME}-health` },
+    { path: "/v1/doc", name: `${WORKER_NAME}-docs` },
   ];
 
   for (const { path, name } of publicPaths) {
@@ -535,7 +561,7 @@ async function teardownAccess(zoneId: string): Promise<void> {
 
   const apps = await client.zeroTrust.access.applications.list({ zone_id: zoneId });
   const sfApps = (apps.result ?? []).filter(
-    (app) => app.name?.startsWith("statsfactory"),
+    (app) => app.name?.startsWith(WORKER_NAME),
   );
 
   if (sfApps.length === 0) {
@@ -715,7 +741,17 @@ async function cmdDestroy(): Promise<void> {
 
 // ── Entrypoint ─────────────────────────────────────────────────────────────
 
-const command = process.argv[2];
+// Strip --name <value> from args to find the command
+const cliArgs = process.argv.slice(2).filter((_, i, arr) => {
+  if (arr[i] === "--name") return false;
+  if (i > 0 && arr[i - 1] === "--name") return false;
+  return true;
+});
+const command = cliArgs[0];
+
+if (INSTANCE_SUFFIX) {
+  info(`Instance: ${WORKER_NAME} (DB: ${DB_NAME})`);
+}
 
 try {
   switch (command) {
@@ -729,17 +765,23 @@ try {
       await cmdDestroy();
       break;
     default:
-      console.log("Usage: bun run scripts/deploy.ts {install|upgrade|destroy}");
+      console.log("Usage: bun run scripts/deploy.ts {install|upgrade|destroy} [--name <instance>]");
       console.log("");
       console.log("Commands:");
       console.log("  install   First-time setup: create D1, configure domain + Access, deploy");
       console.log("  upgrade   Apply new migrations, rebuild, redeploy");
       console.log("  destroy   Delete worker, D1 database, and Access configuration");
       console.log("");
+      console.log("Options:");
+      console.log("  --name <instance>  Instance name for multi-deploy (e.g. --name prod)");
+      console.log("                     Creates worker 'statsfactory-prod', DB 'statsfactory-prod', etc.");
+      console.log("                     Default: 'statsfactory' (no suffix)");
+      console.log("");
       console.log("Environment variables (optional — will prompt if not set):");
       console.log("  CLOUDFLARE_API_TOKEN      API token (see README for required permissions)");
       console.log("  CF_ACCESS_TEAM_DOMAIN     Cloudflare Access team domain");
       console.log("  STATSFACTORY_DOMAIN       Custom domain (e.g. stats.example.com)");
+      console.log("  STATSFACTORY_NAME         Instance name (same as --name flag)");
       process.exit(1);
   }
 } catch (e: unknown) {

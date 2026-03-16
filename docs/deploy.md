@@ -50,6 +50,22 @@ export STATSFACTORY_DOMAIN=stats.example.com
 
 The script is idempotent -- safe to re-run if interrupted.
 
+### Multiple instances
+
+Use `--name` (or `STATSFACTORY_NAME` env var) to deploy independent instances
+side by side. Each gets its own worker, D1 database, Access apps, and deploy
+config file:
+
+```bash
+./deploy.sh install --name prod    # worker: statsfactory-prod, DB: statsfactory-prod
+./deploy.sh install --name staging # worker: statsfactory-staging, DB: statsfactory-staging
+
+./deploy.sh upgrade --name prod
+./deploy.sh destroy --name staging
+```
+
+Without `--name` the default name is `statsfactory` (no suffix).
+
 ## Manual deploy
 
 ### Prerequisites

@@ -10,5 +10,5 @@ dist/
 local.db*
 test-integration-*.db
 contrib/examples/go/go
-wrangler-deploy.toml
+wrangler-deploy*.toml
 *.toml.clean

@@ -238,6 +238,13 @@ export STATSFACTORY_DOMAIN=stats.example.com
 ./deploy.sh install
 ```
 
+Deploy multiple independent instances with `--name`:
+
+```bash
+./deploy.sh install --name prod      # statsfactory-prod worker + D1
+./deploy.sh install --name staging   # statsfactory-staging worker + D1
+```
+
 See [docs/deploy.md](docs/deploy.md) for manual deployment steps and CI/CD setup.
 
 ## Configuration
