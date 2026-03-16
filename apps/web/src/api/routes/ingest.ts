@@ -6,6 +6,9 @@ import {
   ErrorResponseSchema,
   validateEvents,
   dimType,
+  MAX_DIMENSIONS_PER_EVENT,
+  type IngestEvent,
+  type ValidationError,
 } from "../lib/schemas";
 import { events, eventDimensions } from "../../db/schema";
 import type { AppEnv } from "../index";
@@ -70,6 +73,11 @@ const ingestRoute = createRoute({
  *
  * Auth: Bearer API key (handled by auth middleware)
  * Enrichment: geo/UA dimensions (handled by enrich middleware)
+ *
+ * Supports event_key for correlating multiple batch items into a single
+ * logical event. When items share the same event_key + event name, their
+ * dimensions are merged (later entries override earlier for duplicate keys).
+ * The first occurrence's timestamp/session_id/distinct_id are used.
  */
 ingestRouter.openapi(ingestRoute, async (c) => {
   const body = c.req.valid("json");
@@ -78,9 +86,9 @@ ingestRouter.openapi(ingestRoute, async (c) => {
   // The Zod schema validates structure, but we need per-event
   // dimension key/value/count checks so valid events can be accepted
   // even when some fail.
-  const { valid: validEvents, errors } = validateEvents(body.events);
+  const { valid: validItems, errors } = validateEvents(body.events);
 
-  if (errors.length > 0 && validEvents.length === 0) {
+  if (errors.length > 0 && validItems.length === 0) {
     return c.json({ accepted: 0, errors }, 400);
   }
 
@@ -89,31 +97,110 @@ ingestRouter.openapi(ingestRoute, async (c) => {
   const db = c.get("db");
   const now = new Date().toISOString();
 
-  const eventRows: (typeof events.$inferInsert)[] = [];
-  const dimRows: (typeof eventDimensions.$inferInsert)[] = [];
+  // ── Merge events by event_key ──────────────────────────────────────────
+  // Events sharing the same event_key + event name are merged into one.
+  // Events without event_key are treated as standalone (one per item).
 
-  for (const ev of validEvents) {
-    const eventId = ulid();
+  type MergedEvent = {
+    event: string;
+    timestamp: string;
+    sessionId: string | null;
+    distinctId: string | null;
+    dims: Record<string, string | number | boolean>;
+    indices: number[]; // original batch indices (for error reporting)
+  };
+
+  const mergedMap = new Map<string, MergedEvent>(); // key: event_key:event_name
+  const standalone: MergedEvent[] = [];
+
+  for (const { index, event: ev } of validItems) {
     const timestamp = ev.timestamp ?? now;
 
-    eventRows.push({
-      id: eventId,
-      appId,
-      eventName: ev.event,
-      timestamp,
-      sessionId: ev.session_id ?? null,
-      distinctId: ev.distinct_id ?? null,
-      createdAt: now,
-    });
-
     // Merge user dimensions + server-enriched dimensions
-    // User dimensions take precedence (they can override enriched ones if needed)
-    const allDims: Record<string, string | number | boolean> = {
+    // User dimensions take precedence (they can override enriched ones)
+    const evDims: Record<string, string | number | boolean> = {
       ...enrichedDims,
       ...(ev.dimensions ?? {}),
     };
 
-    for (const [key, value] of Object.entries(allDims)) {
+    if (ev.event_key) {
+      const mergeKey = `${ev.event_key}:${ev.event}`;
+      const existing = mergedMap.get(mergeKey);
+
+      if (existing) {
+        // Merge dims — later entries override earlier for duplicate keys
+        Object.assign(existing.dims, evDims);
+        existing.indices.push(index);
+      } else {
+        mergedMap.set(mergeKey, {
+          event: ev.event,
+          timestamp,
+          sessionId: ev.session_id ?? null,
+          distinctId: ev.distinct_id ?? null,
+          dims: evDims,
+          indices: [index],
+        });
+      }
+    } else {
+      standalone.push({
+        event: ev.event,
+        timestamp,
+        sessionId: ev.session_id ?? null,
+        distinctId: ev.distinct_id ?? null,
+        dims: evDims,
+        indices: [index],
+      });
+    }
+  }
+
+  // Collect all merged events and validate merged dim counts
+  const mergeErrors: ValidationError[] = [];
+  const finalEvents: MergedEvent[] = [...standalone];
+
+  for (const merged of mergedMap.values()) {
+    // Check user-provided dim count on merged result
+    const userDimCount = Object.keys(merged.dims).filter(
+      (k) => !(k in enrichedDims),
+    ).length;
+    if (userDimCount > MAX_DIMENSIONS_PER_EVENT) {
+      // Reject all items that contributed to this merged event
+      for (const idx of merged.indices) {
+        mergeErrors.push({
+          index: idx,
+          message: `Merged event (event_key) has ${userDimCount} user dimensions (max ${MAX_DIMENSIONS_PER_EVENT})`,
+        });
+      }
+      continue;
+    }
+
+    finalEvents.push(merged);
+  }
+
+  const allErrors = [...errors, ...mergeErrors];
+
+  if (finalEvents.length === 0 && allErrors.length > 0) {
+    return c.json({ accepted: 0, errors: allErrors }, 400);
+  }
+
+  // ── Build rows ─────────────────────────────────────────────────────────
+
+  const eventRows: (typeof events.$inferInsert)[] = [];
+  const dimRows: (typeof eventDimensions.$inferInsert)[] = [];
+
+  for (const merged of finalEvents) {
+    const eventId = ulid();
+
+    eventRows.push({
+      id: eventId,
+      appId,
+      eventName: merged.event,
+      timestamp: merged.timestamp,
+      sessionId: merged.sessionId,
+      distinctId: merged.distinctId,
+      createdAt: now,
+    });
+
+    for (const [key, value] of Object.entries(merged.dims)) {
       dimRows.push({
         eventId,
         dimKey: key,
@@ -126,8 +213,10 @@ ingestRouter.openapi(ingestRoute, async (c) => {
   // Batch insert into D1.
   // D1 limits bind parameters to 100 per statement, so we chunk inserts.
   // Events: 7 columns → max 14 rows/chunk. Dimensions: 4 columns → max 25 rows/chunk.
+  // D1 free tier limits total statements to 50 per Worker invocation.
   const EVENT_CHUNK = 14;
   const DIM_CHUNK = 25;
+  const MAX_STATEMENTS = 50;
 
   try {
     const statements: Parameters<typeof db.batch>[0] = [];
@@ -138,6 +227,21 @@ ingestRouter.openapi(ingestRoute, async (c) => {
     for (let i = 0; i < dimRows.length; i += DIM_CHUNK) {
       statements.push(
         db.insert(eventDimensions).values(dimRows.slice(i, i + DIM_CHUNK)),
+      );
+    }
+
+    if (statements.length > MAX_STATEMENTS) {
+      return c.json(
+        {
+          accepted: 0,
+          errors: [
+            {
+              index: -1,
+              message: `Batch requires ${statements.length} D1 statements (max ${MAX_STATEMENTS}). Reduce the number of events or dimensions per event.`,
+            },
+          ],
+        },
+        400,
       );
     }
 
@@ -156,7 +260,7 @@ ingestRouter.openapi(ingestRoute, async (c) => {
   }
 
   return c.json({
-    accepted: validEvents.length,
-    errors,
+    accepted: finalEvents.length,
+    errors: allErrors,
   });
 });

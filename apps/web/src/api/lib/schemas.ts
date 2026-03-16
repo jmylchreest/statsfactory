@@ -19,17 +19,21 @@ import { z } from "@hono/zod-openapi";
 // not used — aggregation happens at query time, trading cheap reads for
 // expensive writes. Formula: rows_per_event = 1 + D (1 event + D dims).
 //
-// Enrichment adds up to 9 server-side dims after filtering (see enrich.ts
-// DEFAULT_ENABLED_DIMS). Country mode: geo.country + 4-6 UA = 5-7 dims.
-// City mode: geo.country/region/city + 4-6 UA = 7-9 dims.
-// Total dims per event = user dims + enriched dims ≤ 19 worst case.
+// Enrichment adds server-side dims after filtering (see enrich.ts
+// DEFAULT_ENABLED_DIMS). The number of enriched dims is server-controlled
+// per app via enabled_dims config — typically 5-9 depending on mode.
+//
+// D1 free tier limits: 50 statements per Worker invocation. Each statement
+// in db.batch() counts toward this. The ingest handler checks total
+// statement count after building the batch and rejects if over 50.
+// Formula: ceil(events/14) + ceil(total_dim_rows/25) ≤ 50.
+//
 // At typical usage (10 user + 5 enriched = 15 dims): 16 rows/event.
 // On D1 free tier (100K writes/day): ~6,250 events/day typical.
+// At max (25 user + 9 enriched = 34 dims): 35 rows/event → ~2,857 events/day.
 
 export const MAX_EVENTS_PER_BATCH = 25;
-export const MAX_DIMENSIONS_PER_EVENT = 10;
-export const MAX_ENRICHED_DIMENSIONS = 9; // worst-case enabled server-added dims (city mode + SDK UA)
-export const MAX_TOTAL_DIMENSIONS = MAX_DIMENSIONS_PER_EVENT + MAX_ENRICHED_DIMENSIONS;
+export const MAX_DIMENSIONS_PER_EVENT = 25;
 export const MAX_DIM_VALUE_LENGTH = 256;
 export const MAX_FILTERS = 10;
 export const MAX_LIMIT = 1000;
@@ -58,6 +62,15 @@ export const IngestEventSchema = z
       description:
         "Lowercase alphanumeric + underscores, max 64 chars. Must start with a letter.",
     }),
+    event_key: z.string().max(64).optional().openapi({
+      example: "01JBKV1K7QHGZ9MZXR5V6N4T8P",
+      description:
+        "Client-generated unique key (e.g. ULID) that identifies this event instance. " +
+        "When multiple items in the same batch share the same event_key and event name, " +
+        "their dimensions are merged into a single event. This allows SDKs to split " +
+        "large dimension sets across multiple batch items. The first occurrence's " +
+        "timestamp, session_id, and distinct_id are used.",
+    }),
     timestamp: z
       .string()
       .datetime({ offset: true })
@@ -80,7 +93,7 @@ export const IngestEventSchema = z
       .openapi({
         example: { "plugin.name": "kitty", "plugin.version": 2, enabled: true },
         description:
-          `Key-value dimensions. Keys: lowercase alphanumeric + dots + underscores, max 64 chars. Values: string (max ${MAX_DIM_VALUE_LENGTH} chars), number, or boolean. Max ${MAX_DIMENSIONS_PER_EVENT} user-provided dimensions per event. The server may add up to ${MAX_ENRICHED_DIMENSIONS} additional dimensions (geo, network, UA).`,
+          `Key-value dimensions. Keys: lowercase alphanumeric + dots + underscores, max 64 chars. Values: string (max ${MAX_DIM_VALUE_LENGTH} chars), number, or boolean. Max ${MAX_DIMENSIONS_PER_EVENT} user-provided dimensions per event. The server may add enriched dimensions (geo, UA). Total statement count per batch is capped at 50 (D1 free tier limit).`,
       }),
   })
   .openapi("IngestEvent");
@@ -666,10 +679,10 @@ export type IngestEvent = z.infer<typeof IngestEventSchema>;
 export type ValidationError = z.infer<typeof ValidationErrorSchema>;
 
 export function validateEvents(events: IngestEvent[]): {
-  valid: IngestEvent[];
+  valid: { index: number; event: IngestEvent }[];
   errors: ValidationError[];
 } {
-  const valid: IngestEvent[] = [];
+  const valid: { index: number; event: IngestEvent }[] = [];
   const errors: ValidationError[] = [];
 
   for (let i = 0; i < events.length; i++) {
@@ -713,7 +726,7 @@ export function validateEvents(events: IngestEvent[]): {
       if (!dimValid) continue;
     }
 
-    valid.push(ev);
+    valid.push({ index: i, event: ev });
   }
 
   return { valid, errors };

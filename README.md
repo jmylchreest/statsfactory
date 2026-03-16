@@ -128,10 +128,11 @@ Content-Type: application/json
 | Field | Type | Required | Notes |
 |-------|------|----------|-------|
 | `event` | string | Yes | Lowercase alphanumeric + underscores, max 64 chars. Must start with a letter. |
+| `event_key` | string | No | Client-generated unique key (e.g. ULID) for event correlation. When multiple items in the same batch share the same `event_key` and event name, their dimensions are merged into a single event. Max 64 chars. |
 | `timestamp` | string | No | ISO 8601. Defaults to server time if omitted. |
 | `session_id` | string | No | Client-provided session identifier. |
 | `distinct_id` | string | No | Client-provided user/install identifier. |
-| `dimensions` | object | No | Key-value map. Keys: lowercase `a-z0-9_.`, max 64 chars. Values: string (max 256 chars), number, or boolean. Max 10 user-provided dimensions per event. |
+| `dimensions` | object | No | Key-value map. Keys: lowercase `a-z0-9_.`, max 64 chars. Values: string (max 256 chars), number, or boolean. Max 25 user-provided dimensions per event. |
 
 Up to 25 events per request. Valid events are accepted even if others in the
 batch fail validation (partial acceptance).
@@ -203,11 +204,16 @@ Before deploying, you'll need:
 3. **Zero Trust team** -- set up a [Cloudflare Zero Trust](https://one.dash.cloudflare.com/)
    organization (free for up to 50 users). Under Settings > Authentication, add
    at least one identity provider (Google, GitHub, one-time PIN, etc.).
-4. **API token** -- create a [Custom API Token](https://dash.cloudflare.com/profile/api-tokens)
+4. **Access Group** (recommended) -- controls who can access the dashboard.
+   In the [Zero Trust dashboard](https://one.dash.cloudflare.com/), go to
+   Access > Access Groups > Add a Group. Add an "Emails" include rule listing
+   the people who should have access (or "Emails ending in" for a whole domain).
+5. **API token** -- create a [Custom API Token](https://dash.cloudflare.com/profile/api-tokens)
    (Create Custom Token) with these settings:
    - **Permissions:**
      - Account | D1 | Edit
      - Account | Worker Scripts | Edit
+     - Account | Access: Organizations, Identity Providers, and Groups | Read
      - Zone | Workers Routes | Edit
      - Zone | DNS | Edit
      - Zone | Access: Apps and Policies | Edit
@@ -222,9 +228,10 @@ Before deploying, you'll need:
 ### Deploy script
 
 ```bash
-./deploy.sh install    # Create D1, configure domain + Access, build, deploy
-./deploy.sh upgrade    # Apply new migrations, rebuild, redeploy
-./deploy.sh destroy    # Tear down worker, D1 database, and Access config
+./deploy.sh install              # Create D1, configure domain + Access, build, deploy
+./deploy.sh upgrade              # Apply new migrations, rebuild, redeploy
+./deploy.sh reconfigure-access   # Change who can access the dashboard
+./deploy.sh destroy              # Tear down worker, D1 database, and Access config
 ```
 
 The install script handles `bun install` and `wrangler login` automatically,

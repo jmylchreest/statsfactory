@@ -609,3 +609,77 @@ func TestOnErrorCallback(t *testing.T) {
 		t.Fatal("OnError was not called")
 	}
 }
+
+func TestEventKeyGenerated(t *testing.T) {
+	srv, captured := mockServer(t)
+
+	c := New(Config{
+		ServerURL:     srv.URL,
+		AppKey:        "key",
+		FlushInterval: time.Hour,
+	})
+	defer c.Close()
+
+	c.Track("ev1", nil)
+	c.Flush(context.Background())
+
+	reqs := getCaptured(captured)
+	ev := reqs[0].Body.Events[0]
+
+	if ev.EventKey == "" {
+		t.Fatal("expected event_key to be set, got empty")
+	}
+	if len(ev.EventKey) != 26 {
+		t.Errorf("expected event_key length 26, got %d: %q", len(ev.EventKey), ev.EventKey)
+	}
+}
+
+func TestEventKeyUnique(t *testing.T) {
+	srv, captured := mockServer(t)
+
+	c := New(Config{
+		ServerURL:     srv.URL,
+		AppKey:        "key",
+		FlushInterval: time.Hour,
+	})
+	defer c.Close()
+
+	for i := 0; i < 10; i++ {
+		c.Track("ev", nil)
+	}
+	c.Flush(context.Background())
+
+	reqs := getCaptured(captured)
+	seen := make(map[string]bool)
+	for _, ev := range reqs[0].Body.Events {
+		if seen[ev.EventKey] {
+			t.Fatalf("duplicate event_key: %s", ev.EventKey)
+		}
+		seen[ev.EventKey] = true
+	}
+}
+
+func TestEventKeyInWireFormat(t *testing.T) {
+	srv, captured := mockServer(t)
+
+	c := New(Config{
+		ServerURL:     srv.URL,
+		AppKey:        "key",
+		FlushInterval: time.Hour,
+	})
+	defer c.Close()
+
+	c.Track("test_event", Dims{"key": "val"})
+	c.Flush(context.Background())
+
+	// Verify the raw JSON contains "event_key"
+	reqs := getCaptured(captured)
+	ev := reqs[0].Body.Events[0]
+
+	if ev.Event != "test_event" {
+		t.Errorf("event name = %q, want %q", ev.Event, "test_event")
+	}
+	if ev.EventKey == "" {
+		t.Fatal("event_key missing from wire format")
+	}
+}

@@ -8,6 +8,7 @@
  * Usage:
  *   bun run scripts/deploy.ts install [--name <instance>]
  *   bun run scripts/deploy.ts upgrade [--name <instance>]
+ *   bun run scripts/deploy.ts reconfigure-access [--name <instance>]
  *   bun run scripts/deploy.ts destroy [--name <instance>]
  *
  * The --name flag (or STATSFACTORY_NAME env var) allows multiple independent
@@ -22,6 +23,7 @@
  */
 
 import Cloudflare from "cloudflare";
+import type { AccessRule } from "cloudflare/resources/zero-trust/access/applications";
 import { AuthenticationError, PermissionDeniedError, APIError } from "cloudflare/error";
 import { readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync } from "fs";
 import { resolve, join } from "path";
@@ -72,9 +74,10 @@ function ask(prompt: string): Promise<string> {
 }
 
 /** Run a shell command, streaming output. Returns exit code. */
-async function run(cmd: string[], opts?: { cwd?: string }): Promise<number> {
+async function run(cmd: string[], opts?: { cwd?: string; env?: Record<string, string> }): Promise<number> {
   const proc = Bun.spawn(cmd, {
     cwd: opts?.cwd,
+    env: opts?.env ? { ...process.env, ...opts.env } : undefined,
     stdout: "inherit",
     stderr: "inherit",
     stdin: "inherit",
@@ -122,6 +125,7 @@ async function getClient(): Promise<Cloudflare> {
       "  Token name:     statsfactory",
       "  Permissions:    Account | D1 | Edit",
       "                  Account | Worker Scripts | Edit",
+      "                  Account | Access: Organizations, Identity Providers, and Groups | Read",
       "                  Zone | Workers Routes | Edit",
       "                  Zone | DNS | Edit",
       "                  Zone | Access: Apps and Policies | Edit",
@@ -163,6 +167,7 @@ async function getAccountId(): Promise<string> {
           "Required permissions:\n" +
           "  Account | D1 | Edit\n" +
           "  Account | Worker Scripts | Edit\n" +
+          "  Account | Access: Organizations, Identity Providers, and Groups | Read\n" +
           "  Zone | Workers Routes | Edit\n" +
           "  Zone | DNS | Edit\n" +
           "  Zone | Access: Apps and Policies | Edit\n\n" +
@@ -439,43 +444,29 @@ function restoreCleanToml(): void {
 interface AccessSetupOptions {
   domain: string;
   zoneId: string;
+  accountId: string;
 }
 
 /**
- * Create Cloudflare Access application + policies (idempotent).
+ * Prompt the user to choose an access policy and return the include rules.
  *
- * Creates:
- *   1. Main app (whole domain) with user-chosen allow policy
- *   2. Bypass apps for public endpoints (/v1/events, /v1/health, /v1/doc)
- *
- * CF Access evaluates more-specific paths first, so the bypass apps
- * for /v1/events etc. take precedence over the main app.
+ * Options:
+ *   1) Specific emails
+ *   2) Email domain
+ *   3) Access Group (recommended — restricts to team members)
+ *   4) Allow everyone (WARNING: any email with OTP can access)
  */
-async function setupAccess({ domain, zoneId }: AccessSetupOptions): Promise<void> {
+async function promptAccessPolicy(accountId: string): Promise<AccessRule[]> {
   const client = await getClient();
-  info("Configuring Cloudflare Access protection...");
-  info(`Zone ID: ${zoneId}`);
 
-  // Check if main Access app already exists
-  const existing = await client.zeroTrust.access.applications.list({ zone_id: zoneId });
-  const existingApp = existing.result?.find(
-    (app) => "domain" in app && app.domain === domain,
-  );
-
-  if (existingApp) {
-    info(`Access application for '${domain}' already exists (${existingApp.id}), skipping.`);
-    return;
-  }
-
-  // Ask how to configure the allow policy
   console.log("\nHow should dashboard access be controlled?");
   console.log("  1) Allow specific email addresses (e.g. user@example.com)");
   console.log("  2) Allow an email domain (e.g. everyone@example.com)");
-  console.log("  3) Allow everyone (any authenticated user)");
+  console.log("  3) Allow an Access Group (Recommended)");
+  console.log("  4) Allow everyone (WARNING: any email that can receive an OTP gets access)");
   console.log("");
-  const choice = await ask("Choice [1/2/3]");
+  const choice = await ask("Choice [1/2/3/4]");
 
-  type AccessRule = Cloudflare.ZeroTrust.Access.AccessRule;
   let includeRules: AccessRule[];
 
   switch (choice) {
@@ -493,12 +484,96 @@ async function setupAccess({ domain, zoneId }: AccessSetupOptions): Promise<void
       includeRules = [{ email_domain: { domain: emailDomain } }];
       break;
     }
-    case "3":
+    case "3": {
+      // List available Access Groups
+      info("Fetching Access Groups...");
+      const groups: Array<{ id: string; name: string }> = [];
+      for await (const group of client.zeroTrust.access.groups.list({ account_id: accountId })) {
+        if (group.id && group.name) {
+          groups.push({ id: group.id, name: group.name });
+        }
+      }
+
+      if (groups.length === 0) {
+        die(
+          "No Access Groups found in your account.\n\n" +
+            "Create one in the Zero Trust dashboard:\n" +
+            "  1. Go to https://one.dash.cloudflare.com\n" +
+            "  2. Navigate to Access > Access Groups > Add a Group\n" +
+            "  3. Give it a name (e.g. your team or org name)\n" +
+            "  4. Under Include, select 'Emails' and add the email addresses\n" +
+            "     of people who should access the dashboard\n" +
+            "     (or use 'Emails ending in' for a whole domain, e.g. example.com)\n" +
+            "  5. Save the group\n\n" +
+            "Then re-run this command.",
+        );
+      }
+
+      console.log("\nAvailable Access Groups:");
+      for (let i = 0; i < groups.length; i++) {
+        console.log(`  ${i + 1}) ${groups[i].name} (${groups[i].id})`);
+      }
+      console.log("");
+      const groupChoice = await ask(`Group number [1-${groups.length}]`);
+      const groupIdx = parseInt(groupChoice, 10) - 1;
+      if (isNaN(groupIdx) || groupIdx < 0 || groupIdx >= groups.length) {
+        die(`Invalid choice. Please enter a number between 1 and ${groups.length}.`);
+      }
+
+      const selected = groups[groupIdx];
+      info(`Selected group: ${selected.name}`);
+      includeRules = [{ group: { id: selected.id } }];
+      break;
+    }
+    case "4": {
+      console.log("");
+      console.log("  ⚠  WARNING: 'Allow everyone' means ANY email address that can");
+      console.log("     receive a one-time-password will be able to access your dashboard.");
+      console.log("     This does NOT restrict access to your Cloudflare team members.");
+      console.log("     Consider using an Access Group (option 3) instead.");
+      console.log("");
+      const confirm = await ask("Type 'yes' to confirm");
+      if (confirm !== "yes") {
+        die("Aborted. Re-run and choose a more restrictive option.");
+      }
       includeRules = [{ everyone: {} }];
       break;
+    }
     default:
-      die("Invalid choice. Please enter 1, 2, or 3.");
+      die("Invalid choice. Please enter 1, 2, 3, or 4.");
   }
+
+  return includeRules;
+}
+
+/**
+ * Create Cloudflare Access application + policies (idempotent).
+ *
+ * Creates:
+ *   1. Main app (whole domain) with user-chosen allow policy
+ *   2. Bypass apps for public endpoints (/v1/events, /v1/health, /v1/doc)
+ *
+ * CF Access evaluates more-specific paths first, so the bypass apps
+ * for /v1/events etc. take precedence over the main app.
+ */
+async function setupAccess({ domain, zoneId, accountId }: AccessSetupOptions): Promise<void> {
+  const client = await getClient();
+  info("Configuring Cloudflare Access protection...");
+  info(`Zone ID: ${zoneId}`);
+
+  // Check if main Access app already exists
+  const existing = await client.zeroTrust.access.applications.list({ zone_id: zoneId });
+  const existingApp = existing.result?.find(
+    (app) => "domain" in app && app.domain === domain,
+  );
+
+  if (existingApp) {
+    info(`Access application for '${domain}' already exists (${existingApp.id}), skipping.`);
+    info("To change the access policy, run: bun run scripts/deploy.ts reconfigure-access");
+    return;
+  }
+
+  const includeRules = await promptAccessPolicy(accountId);
 
   // Create main Access application
   info(`Creating Access application for '${domain}'...`);
@@ -595,7 +670,7 @@ async function cmdInstall(): Promise<void> {
   info("Applying D1 migrations...");
   await applyMigrations(accountId, dbId);
 
-  // 3. Secrets
+  // 3. Gather config (prompt now, apply secrets after deploy when worker exists)
   const teamDomain = await getEnvOrAsk(
     "CF_ACCESS_TEAM_DOMAIN",
     "CF_ACCESS_TEAM_DOMAIN",
@@ -605,7 +680,6 @@ async function cmdInstall(): Promise<void> {
       "Find it at: https://one.dash.cloudflare.com -> Settings -> Custom Pages",
     ].join("\n"),
   );
-  await ensureSecret(accountId, "CF_ACCESS_TEAM_DOMAIN", teamDomain);
 
   // 4. Custom domain + zone validation
   const customDomain = await getEnvOrAsk(
@@ -638,8 +712,11 @@ async function cmdInstall(): Promise<void> {
     restoreCleanToml();
   }
 
-  // 7. Cloudflare Access (idempotent)
-  await setupAccess({ domain: customDomain, zoneId });
+  // 7. Set secrets (must be after deploy so the worker exists)
+  await ensureSecret(accountId, "CF_ACCESS_TEAM_DOMAIN", teamDomain);
+
+  // 8. Cloudflare Access (idempotent)
+  await setupAccess({ domain: customDomain, zoneId, accountId });
 
   console.log("");
   info(`Done! statsfactory is deployed at https://${customDomain}`);
@@ -711,9 +788,12 @@ async function cmdDestroy(): Promise<void> {
     info("No deploy config found, skipping Access cleanup.");
   }
 
-  // 2. Delete the worker
+  // 2. Delete the worker (CI=true skips wrangler's interactive confirmation)
   info(`Deleting worker '${WORKER_NAME}'...`);
-  const deleteCode = await run(["bunx", "wrangler", "delete", "--name", WORKER_NAME]);
+  const deleteCode = await run(
+    ["bunx", "wrangler", "delete", "--name", WORKER_NAME, "--force"],
+    { env: { CI: "true" } },
+  );
   if (deleteCode !== 0) info("Worker may already be deleted.");
 
   // 3. Delete D1 database
@@ -739,6 +819,105 @@ async function cmdDestroy(): Promise<void> {
   info("Done. statsfactory has been destroyed.");
 }
 
+/**
+ * Reconfigure the Cloudflare Access policy for an existing deployment.
+ *
+ * This allows changing who can access the dashboard without doing a full
+ * destroy + install cycle. It:
+ *   1. Finds the existing Access application for the domain
+ *   2. Deletes the old allow policy
+ *   3. Prompts for a new policy configuration
+ *   4. Creates the new allow policy
+ *
+ * Bypass policies for public endpoints are left untouched.
+ */
+async function cmdReconfigureAccess(): Promise<void> {
+  info("Reconfiguring Cloudflare Access policy...");
+
+  const config = readDeployConfig();
+  if (!config?.domain) {
+    die(
+      "No deploy config found. Run 'install' first.\n" +
+        `Expected: ${DEPLOY_TOML}`,
+    );
+  }
+
+  const accountId = await getAccountId();
+  const domain = config.domain;
+  info(`Domain: ${domain}`);
+
+  const zoneId = await getZoneId(domain);
+  info(`Zone ID: ${zoneId}`);
+
+  const client = await getClient();
+
+  // Find the main Access application (matches the bare domain, not subpaths)
+  const apps = await client.zeroTrust.access.applications.list({ zone_id: zoneId });
+  const mainApp = (apps.result ?? []).find(
+    (app) => "domain" in app && app.domain === domain && app.name === WORKER_NAME,
+  );
+
+  if (!mainApp?.id) {
+    die(
+      `No Access application found for '${domain}'.\n` +
+        "Run 'install' first to create the Access configuration.",
+    );
+  }
+
+  info(`Found Access application: ${mainApp.name} (${mainApp.id})`);
+
+  // List existing policies to find and remove the allow policy
+  const policies = await client.zeroTrust.access.applications.policies.list(mainApp.id, {
+    zone_id: zoneId,
+  });
+  const allowPolicy = (policies.result ?? []).find(
+    (p) => p.name === `${WORKER_NAME}-allow`,
+  );
+
+  if (allowPolicy?.id) {
+    // Show current policy details
+    info(`Current allow policy: ${allowPolicy.name} (${allowPolicy.id})`);
+    const currentInclude = allowPolicy.include ?? [];
+    for (const rule of currentInclude) {
+      if ("everyone" in rule) {
+        info("  Current rule: Allow everyone (INSECURE)");
+      } else if ("email" in rule) {
+        info(`  Current rule: Email ${(rule as any).email.email}`);
+      } else if ("email_domain" in rule) {
+        info(`  Current rule: Domain ${(rule as any).email_domain.domain}`);
+      } else if ("group" in rule) {
+        info(`  Current rule: Access Group ${(rule as any).group.id}`);
+      }
+    }
+    console.log("");
+
+    info("Deleting old allow policy...");
+    await client.zeroTrust.access.applications.policies.delete(allowPolicy.id, mainApp.id, {
+      zone_id: zoneId,
+    });
+    info("Old policy deleted.");
+  } else {
+    info("No existing allow policy found. Creating a new one.");
+  }
+
+  // Prompt for new policy
+  const includeRules = await promptAccessPolicy(accountId);
+
+  // Create new allow policy
+  info("Creating new allow policy...");
+  await client.zeroTrust.access.applications.policies.create(mainApp.id, {
+    zone_id: zoneId,
+    name: `${WORKER_NAME}-allow`,
+    decision: "allow",
+    include: includeRules,
+    precedence: 1,
+  });
+
+  console.log("");
+  info("Access policy reconfigured successfully.");
+  info(`Dashboard: https://${domain}`);
+}
+
 // ── Entrypoint ─────────────────────────────────────────────────────────────
 
 // Strip --name <value> from args to find the command
@@ -761,16 +940,20 @@ try {
     case "upgrade":
       await cmdUpgrade();
       break;
+    case "reconfigure-access":
+      await cmdReconfigureAccess();
+      break;
     case "destroy":
       await cmdDestroy();
       break;
     default:
-      console.log("Usage: bun run scripts/deploy.ts {install|upgrade|destroy} [--name <instance>]");
+      console.log("Usage: bun run scripts/deploy.ts <command> [--name <instance>]");
       console.log("");
       console.log("Commands:");
-      console.log("  install   First-time setup: create D1, configure domain + Access, deploy");
-      console.log("  upgrade   Apply new migrations, rebuild, redeploy");
-      console.log("  destroy   Delete worker, D1 database, and Access configuration");
+      console.log("  install              First-time setup: create D1, configure domain + Access, deploy");
+      console.log("  upgrade              Apply new migrations, rebuild, redeploy");
+      console.log("  reconfigure-access   Change who can access the dashboard (without redeploying)");
+      console.log("  destroy              Delete worker, D1 database, and Access configuration");
       console.log("");
       console.log("Options:");
       console.log("  --name <instance>  Instance name for multi-deploy (e.g. --name prod)");

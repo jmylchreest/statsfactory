@@ -12,12 +12,20 @@
    [Cloudflare Zero Trust](https://one.dash.cloudflare.com/) organization
    (free for up to 50 users). Under Settings > Authentication, add at least one
    identity provider (Google, GitHub, one-time PIN, etc.).
-4. **API token** -- create a
+4. **Access Group** (recommended) -- restricts dashboard access to specific
+   people. In the [Zero Trust dashboard](https://one.dash.cloudflare.com/),
+   go to Access > Access Groups > Add a Group:
+   - **Group name:** e.g. `Team` or your org name
+   - **Include rule:** select "Emails" and add the email addresses of people
+     who should have access (or use "Emails ending in" for a whole domain)
+   - Save the group. The deploy script will reference it during install.
+5. **API token** -- create a
    [Custom API Token](https://dash.cloudflare.com/profile/api-tokens)
    (Create Custom Token) with these settings:
    - **Permissions:**
      - Account | D1 | Edit
      - Account | Worker Scripts | Edit
+     - Account | Access: Organizations, Identity Providers, and Groups | Read
      - Zone | Workers Routes | Edit
      - Zone | DNS | Edit
      - Zone | Access: Apps and Policies | Edit
@@ -33,9 +41,10 @@ The fastest way to deploy. Only requires `bun` installed -- the script handles
 `bun install` and `wrangler login` automatically.
 
 ```bash
-./deploy.sh install    # Create D1, configure domain + Access, build, deploy
-./deploy.sh upgrade    # Apply new migrations, rebuild, redeploy
-./deploy.sh destroy    # Tear down worker, D1 database, and Access config
+./deploy.sh install              # Create D1, configure domain + Access, build, deploy
+./deploy.sh upgrade              # Apply new migrations, rebuild, redeploy
+./deploy.sh reconfigure-access   # Change the Access policy without rebuild/redeploy
+./deploy.sh destroy              # Tear down worker, D1 database, and Access config
 ```
 
 The install script prompts for everything interactively, or set environment

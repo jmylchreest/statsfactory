@@ -11,7 +11,7 @@ preview_urls = false
 [[d1_databases]]
 binding = "DB"
 database_name = "statsfactory"
-database_id = "local-dev"
+database_id = "d76e2feb-c202-4227-bb97-9d5616661570"
 migrations_dir = "migrations"
 
 [vars]
@@ -30,4 +30,6 @@ directory = "./dist"
 [triggers]
 crons = ["0 3 * * *"]
 
-# DEPLOY:ROUTES
+[[routes]]
+pattern = "sf.dbl-u.xyz"
+custom_domain = true

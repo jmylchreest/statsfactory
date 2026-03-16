@@ -158,9 +158,9 @@ describe("IngestRequestSchema (Zod)", () => {
 
 describe("validateEvents (per-event partial validation)", () => {
   describe("dimension validation", () => {
-    it("rejects more than 10 dimensions", () => {
+    it("rejects more than 25 dimensions", () => {
       const dimensions: Record<string, string> = {};
-      for (let i = 0; i < 11; i++) {
+      for (let i = 0; i < 26; i++) {
         dimensions[`dim_${String(i).padStart(3, "0")}`] = "val";
       }
       const { valid, errors } = validateEvents([
@@ -171,9 +171,9 @@ describe("validateEvents (per-event partial validation)", () => {
       expect(errors[0].message).toMatch(/Too many dimensions/);
     });
 
-    it("accepts exactly 10 dimensions", () => {
+    it("accepts exactly 25 dimensions", () => {
       const dimensions: Record<string, string> = {};
-      for (let i = 0; i < 10; i++) {
+      for (let i = 0; i < 25; i++) {
         dimensions[`dim_${String(i).padStart(3, "0")}`] = "val";
       }
       const { valid, errors } = validateEvents([
@@ -246,8 +246,8 @@ describe("validateEvents (per-event partial validation)", () => {
         { event: "third_valid" },
       ]);
       expect(valid).toHaveLength(2);
-      expect(valid[0].event).toBe("valid_event");
-      expect(valid[1].event).toBe("third_valid");
+      expect(valid[0].event.event).toBe("valid_event");
+      expect(valid[1].event.event).toBe("third_valid");
       expect(errors).toHaveLength(1);
       expect(errors[0].index).toBe(1);
     });

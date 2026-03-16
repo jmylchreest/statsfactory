@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # statsfactory deploy script — thin wrapper around scripts/deploy.ts
-# Usage: ./deploy.sh install | upgrade | destroy
+# Usage: ./deploy.sh install | upgrade | reconfigure-access | destroy
 set -euo pipefail
 
 die() { echo "Error: $*" >&2; exit 1; }

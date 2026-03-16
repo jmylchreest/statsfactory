@@ -79,6 +79,7 @@ type Config struct {
 // event is a single event queued for sending.
 type event struct {
 	Event      string         `json:"event"`
+	EventKey   string         `json:"event_key,omitempty"`
 	Timestamp  string         `json:"timestamp,omitempty"`
 	SessionID  string         `json:"session_id,omitempty"`
 	DistinctID string         `json:"distinct_id,omitempty"`
@@ -175,7 +176,8 @@ func (c *Client) TrackWithOptions(eventName string, dims Dims, opts TrackOptions
 	}
 
 	ev := event{
-		Event: eventName,
+		Event:    eventName,
+		EventKey: generateULID(),
 	}
 
 	if !opts.Timestamp.IsZero() {

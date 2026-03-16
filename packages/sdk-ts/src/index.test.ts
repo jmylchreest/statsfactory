@@ -386,8 +386,13 @@ describe("StatsFactory", () => {
       await client.flush();
 
       const event = mock.requests[0].body.events[0];
-      // Matches Go SDK's event struct JSON tags exactly.
-      expect(event).toEqual({
+      // event_key is always present — a 26-char ULID
+      expect(event.event_key).toBeDefined();
+      expect(typeof event.event_key).toBe("string");
+      expect((event.event_key as string).length).toBe(26);
+
+      // Matches Go SDK's event struct JSON tags exactly (minus event_key which is auto-generated).
+      expect(event).toMatchObject({
         event: "plugin_used",
         timestamp: "2026-03-15T10:00:00Z",
         session_id: "test-session",
@@ -401,7 +406,7 @@ describe("StatsFactory", () => {
       });
     });
 
-    it("omits optional fields when not provided", async () => {
+    it("omits optional fields when not provided (except event_key)", async () => {
       const { client, mock } = createClient({ sessionId: "s" });
       client.track("simple_event");
       await client.flush();
@@ -409,9 +414,24 @@ describe("StatsFactory", () => {
       const event = mock.requests[0].body.events[0];
       expect(event.event).toBe("simple_event");
       expect(event.session_id).toBe("s");
+      expect(event.event_key).toBeDefined();
+      expect((event.event_key as string).length).toBe(26);
       expect(event).not.toHaveProperty("timestamp");
       expect(event).not.toHaveProperty("distinct_id");
       expect(event).not.toHaveProperty("dimensions");
+    });
+
+    it("generates unique event_key per event", async () => {
+      const { client, mock } = createClient();
+      client.track("ev1");
+      client.track("ev2");
+      client.track("ev3");
+      await client.flush();
+
+      const keys = mock.requests[0].body.events.map(
+        (e: Record<string, unknown>) => e.event_key,
+      );
+      expect(new Set(keys).size).toBe(3);
     });
   });
 });

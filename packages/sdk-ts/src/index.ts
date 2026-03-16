@@ -93,6 +93,7 @@ export interface TrackOptions {
 
 interface Event {
   event: string;
+  event_key?: string;
   timestamp?: string;
   session_id?: string;
   distinct_id?: string;
@@ -112,6 +113,36 @@ const FLUSH_TIMEOUT = 10_000;
 const SESSION_STORAGE_KEY = "statsfactory_session_id";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+const ULID_ENCODING = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"; // Crockford base32
+
+/**
+ * Generate a ULID (26-char, time-sortable unique ID).
+ * Uses crypto.getRandomValues where available, falls back to Math.random.
+ */
+function generateUlid(): string {
+  let now = Date.now();
+  let time = "";
+  for (let i = 10; i > 0; i--) {
+    const mod = now % 32;
+    time = ULID_ENCODING[mod] + time;
+    now = (now - mod) / 32;
+  }
+
+  let random = "";
+  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    for (let i = 0; i < 16; i++) {
+      random += ULID_ENCODING[bytes[i] % 32];
+    }
+  } else {
+    for (let i = 0; i < 16; i++) {
+      random += ULID_ENCODING[Math.floor(Math.random() * 32)];
+    }
+  }
+
+  return time + random;
+}
 
 /** Is this running in a browser environment? */
 function isBrowser(): boolean {
@@ -230,7 +261,10 @@ export class StatsFactory {
   trackWithOptions(eventName: string, dims?: Dims, options?: TrackOptions): void {
     if (this.closed) return;
 
-    const ev: Event = { event: eventName };
+    const ev: Event = {
+      event: eventName,
+      event_key: generateUlid(),
+    };
 
     if (options?.timestamp) {
       ev.timestamp =

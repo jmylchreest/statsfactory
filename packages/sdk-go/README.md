@@ -54,8 +54,10 @@ func main() {
 
 ## Dimensions
 
-Dimensions are `map[string]any` values. Supported types: `string`, `int`,
-`float64`, `bool`. Use dot-notation to group related dimensions:
+Dimensions are `map[string]any` values. Up to **25 user-provided dimensions**
+per event. The server may add up to 9 additional enriched dimensions (geo,
+network, UA). Supported types: `string`, `int`, `float64`, `bool`. Use
+dot-notation to group related dimensions:
 
 ```go
 client.Track("plugin_used", statsfactory.Dims{
@@ -68,7 +70,18 @@ client.Track("plugin_used", statsfactory.Dims{
 
 ## Advanced
 
-Override timestamp, session ID, or distinct ID per event:
+### Event Key (event correlation)
+
+Every event is automatically assigned an `event_key` (a ULID) that uniquely
+identifies it within a batch. This is used server-side to merge multiple batch
+items into a single logical event when they share the same `event_key` and
+event name.
+
+This is transparent to normal usage -- the SDK handles it automatically. It
+enables future scenarios where an SDK needs to split a large dimension set
+across multiple batch items for the same logical event.
+
+### Override timestamp, session ID, or distinct ID per event
 
 ```go
 client.TrackWithOptions("event_name", statsfactory.Dims{...}, statsfactory.TrackOptions{

@@ -52,8 +52,10 @@ await sf.close();
 
 ## Dimensions
 
-Dimensions are `Record<string, string | number | boolean>`. Use dot-notation
-to group related dimensions:
+Dimensions are `Record<string, string | number | boolean>`. Up to **25
+user-provided dimensions** per event. The server may add up to 9 additional
+enriched dimensions (geo, network, UA). Use dot-notation to group related
+dimensions:
 
 ```ts
 sf.track("plugin_used", {
@@ -66,7 +68,18 @@ sf.track("plugin_used", {
 
 ## Advanced
 
-Override timestamp, session ID, or distinct ID per event:
+### Event Key (event correlation)
+
+Every event is automatically assigned an `event_key` (a ULID) that uniquely
+identifies it within a batch. This is used server-side to merge multiple batch
+items into a single logical event when they share the same `event_key` and
+event name.
+
+This is transparent to normal usage -- the SDK handles it automatically. It
+enables future scenarios where an SDK needs to split a large dimension set
+across multiple batch items for the same logical event.
+
+### Override timestamp, session ID, or distinct ID per event
 
 ```ts
 sf.trackWithOptions("event_name", { key: "value" }, {

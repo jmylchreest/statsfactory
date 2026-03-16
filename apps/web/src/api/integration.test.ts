@@ -452,4 +452,136 @@ describe("Integration: Event Ingestion Pipeline", () => {
     const body = await res.json() as { status: string };
     expect(body.status).toBe("ok");
   });
+
+  // ── Dimension limits and chunking ─────────────────────────────────────────
+
+  it("should accept events at and below the 25-dim cap, reject those above", async () => {
+    // Helper: generate N dimensions with unique keys
+    const makeDims = (n: number, prefix: string): Record<string, string> => {
+      const dims: Record<string, string> = {};
+      for (let i = 0; i < n; i++) {
+        dims[`${prefix}.dim_${String(i).padStart(3, "0")}`] = `value_${i}`;
+      }
+      return dims;
+    };
+
+    const res = await appRequest("/v1/events", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${testApiKey}`,
+        "User-Agent": "statsfactory-sdk-ts/0.1.0 (dim-test/1.0.0; linux; x64)",
+      },
+      body: JSON.stringify({
+        events: [
+          {
+            event: "dim_test",
+            timestamp: "2026-03-14T14:00:00Z",
+            session_id: "dim-session",
+            dimensions: makeDims(10, "ten"),   // index 0: 10 dims — accepted
+          },
+          {
+            event: "dim_test",
+            timestamp: "2026-03-14T14:01:00Z",
+            session_id: "dim-session",
+            dimensions: makeDims(25, "tfive"), // index 1: 25 dims — accepted (at cap)
+          },
+          {
+            event: "dim_test",
+            timestamp: "2026-03-14T14:02:00Z",
+            session_id: "dim-session",
+            dimensions: makeDims(26, "tsix"),  // index 2: 26 dims — rejected
+          },
+          {
+            event: "dim_test",
+            timestamp: "2026-03-14T14:03:00Z",
+            session_id: "dim-session",
+            dimensions: makeDims(50, "fifty"), // index 3: 50 dims — rejected
+          },
+        ],
+      }),
+    });
+
+    expect(res.status).toBe(200); // partial acceptance
+    const body = await res.json() as {
+      accepted: number;
+      errors: Array<{ index: number; message: string }>;
+    };
+
+    // 2 accepted (10 and 25 dims), 2 rejected (26 and 50 dims)
+    expect(body.accepted).toBe(2);
+    expect(body.errors).toHaveLength(2);
+
+    // Check errors reference the correct indices and mention dim counts
+    const err26 = body.errors.find((e) => e.index === 2);
+    expect(err26).toBeDefined();
+    expect(err26!.message).toContain("26");
+    expect(err26!.message).toContain("25");
+
+    const err50 = body.errors.find((e) => e.index === 3);
+    expect(err50).toBeDefined();
+    expect(err50!.message).toContain("50");
+    expect(err50!.message).toContain("25");
+  });
+
+  it("should store all dimensions for accepted high-dim events", async () => {
+    // Query dimension keys for dim_test events — should include keys from
+    // both the 10-dim and 25-dim events
+    const res = await appRequest(
+      `/v1/query/dimensions?app_id=${testAppId}&event_name=dim_test`,
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      dimensions: Array<{ dimKey: string }>;
+    };
+
+    const dimKeys = body.dimensions.map((d) => d.dimKey);
+
+    // All 10 dims from the first event should be present
+    for (let i = 0; i < 10; i++) {
+      expect(dimKeys).toContain(`ten.dim_${String(i).padStart(3, "0")}`);
+    }
+
+    // All 25 dims from the second event should be present
+    for (let i = 0; i < 25; i++) {
+      expect(dimKeys).toContain(`tfive.dim_${String(i).padStart(3, "0")}`);
+    }
+
+    // None of the rejected events' dims should be present
+    expect(dimKeys.some((k) => k.startsWith("tsix."))).toBe(false);
+    expect(dimKeys.some((k) => k.startsWith("fifty."))).toBe(false);
+  });
+
+  it("should chunk dimension inserts correctly for 25-dim event", async () => {
+    // Verify the 25-dim event's dimensions are all queryable via breakdown.
+    // 25 dim rows for one event = ceil(25/25) = 1 chunk. This proves the
+    // chunk boundary works correctly (25 rows exactly fills one DIM_CHUNK).
+    const res = await appRequest(
+      `/v1/query/breakdown?app_id=${testAppId}&event_name=dim_test&dim_key=tfive.dim_000&from=2026-03-01T00:00:00Z&to=2026-03-31T00:00:00Z`,
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      breakdown: Array<{ value: string; count: number }>;
+    };
+
+    // Should find exactly one value: "value_0" from the 25-dim event
+    expect(body.breakdown.length).toBe(1);
+    expect(body.breakdown[0].value).toBe("value_0");
+    expect(body.breakdown[0].count).toBe(1);
+
+    // Also check a dim near the end of the 25-dim set (dim_024)
+    const res2 = await appRequest(
+      `/v1/query/breakdown?app_id=${testAppId}&event_name=dim_test&dim_key=tfive.dim_024&from=2026-03-01T00:00:00Z&to=2026-03-31T00:00:00Z`,
+    );
+
+    expect(res2.status).toBe(200);
+    const body2 = await res2.json() as {
+      breakdown: Array<{ value: string; count: number }>;
+    };
+
+    expect(body2.breakdown.length).toBe(1);
+    expect(body2.breakdown[0].value).toBe("value_24");
+  });
 });
