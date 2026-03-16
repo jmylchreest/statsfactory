@@ -7,14 +7,12 @@ preview_urls = false
 # ── Database ─────────────────────────────────────────────────────────────────
 # D1 — zero latency, colocated with the Worker.
 # For local dev: `just init` creates a local D1 database via miniflare.
-# For production: `wrangler d1 create statsfactory` and paste the database_id.
+# For production: the deploy script manages database_id via wrangler-deploy.toml.
 [[d1_databases]]
 binding = "DB"
 database_name = "statsfactory"
-database_id = "51c962c3-45b9-467c-baae-588a9bd7027f"
+database_id = "local-dev"
 migrations_dir = "migrations"
-# ⬆ Replace "local-dev" with your real database_id for production.
-#   The deploy script handles this automatically.
 
 [vars]
 # Non-secret environment variables.
@@ -31,3 +29,5 @@ directory = "./dist"
 # In dev mode: `wrangler dev --test-scheduled`, then curl http://localhost:8787/__scheduled
 [triggers]
 crons = ["0 3 * * *"]
+
+# DEPLOY:ROUTES

@@ -84,7 +84,15 @@ export const cfAccessAuth = createMiddleware<AppEnv>(async (c, next) => {
   const email = c.req.header("Cf-Access-Authenticated-User-Email");
 
   if (!email) {
-    return c.json({ error: "Cloudflare Access authentication required" }, 401);
+    const requestUrl = new URL(c.req.url);
+    const loginUrl = `${requestUrl.origin}/cdn-cgi/access/login`;
+    return c.json(
+      {
+        error: "Cloudflare Access authentication required",
+        login_url: loginUrl,
+      },
+      401,
+    );
   }
 
   c.set("cfAccessEmail", email);

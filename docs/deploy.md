@@ -1,23 +1,59 @@
 # Deploy
 
+## Prerequisites
+
+**Cloudflare setup:**
+
+1. **Cloudflare account** -- [sign up free](https://dash.cloudflare.com/sign-up).
+2. **Domain on Cloudflare** -- a domain using Cloudflare nameservers. You can
+   [register a new domain](https://www.cloudflare.com/products/registrar/)
+   or [add an existing one](https://developers.cloudflare.com/fundamentals/setup/manage-domains/add-site/).
+3. **Zero Trust team** -- set up a
+   [Cloudflare Zero Trust](https://one.dash.cloudflare.com/) organization
+   (free for up to 50 users). Under Settings > Authentication, add at least one
+   identity provider (Google, GitHub, one-time PIN, etc.).
+4. **API token** -- create a
+   [Custom API Token](https://dash.cloudflare.com/profile/api-tokens)
+   (Create Custom Token) with these settings:
+   - **Permissions:**
+     - Account | D1 | Edit
+     - Account | Worker Scripts | Edit
+     - Zone | Access: Apps and Policies | Edit
+   - **Zone Resources:** Include | Specific zone | *your domain*
+
+**Local tooling:**
+
+- [bun](https://bun.sh) -- everything else is installed automatically
+
 ## Quick start (deploy script)
 
-The fastest way to deploy. Requires [wrangler](https://developers.cloudflare.com/workers/wrangler/) authenticated (`wrangler login`).
+The fastest way to deploy. Only requires `bun` installed -- the script handles
+`bun install` and `wrangler login` automatically.
 
 ```bash
-./deploy.sh install    # First time: create D1, set secrets, build, deploy
+./deploy.sh install    # Create D1, configure domain + Access, build, deploy
 ./deploy.sh upgrade    # Apply new migrations, rebuild, redeploy
-./deploy.sh destroy    # Tear down worker + D1 database
+./deploy.sh destroy    # Tear down worker, D1 database, and Access config
 ```
 
-`install` prompts for `CF_ACCESS_TEAM_DOMAIN` interactively (or pass it via env var).
+The install script prompts for everything interactively, or set environment
+variables to skip prompts:
+
+```bash
+export CLOUDFLARE_API_TOKEN=xxxx
+export CF_ACCESS_TEAM_DOMAIN=myteam         # <team>.cloudflareaccess.com
+export STATSFACTORY_DOMAIN=stats.example.com
+./deploy.sh install
+```
+
+The script is idempotent -- safe to re-run if interrupted.
 
 ## Manual deploy
 
 ### Prerequisites
 
-- [Cloudflare](https://dash.cloudflare.com) account (free tier works)
-- [bun](https://bun.sh) and [wrangler](https://developers.cloudflare.com/workers/wrangler/) installed
+Same as above, plus [wrangler](https://developers.cloudflare.com/workers/wrangler/)
+authenticated (`wrangler login`).
 
 ### 1. Create the D1 database
 
@@ -68,12 +104,20 @@ Cloudflare provisions DNS and TLS automatically.
 
 ### 4. Cloudflare Access (Zero Trust)
 
+> **Note:** The deploy script (`./deploy.sh install`) configures Access
+> automatically. These manual steps are only needed if you're not using
+> the script.
+
 Protects the dashboard and query API. Free for up to 50 users.
 
 1. [Zero Trust dashboard](https://one.dash.cloudflare.com) > Settings > Authentication -- add an identity provider (Google, GitHub, one-time PIN)
 2. Access > Applications > Add application > **Self-hosted**
-3. Set domain to your worker URL or custom domain
+3. Set domain to your custom domain (e.g. `stats.example.com`)
 4. Add an **Allow** policy (e.g. emails ending in `@yourcompany.com`)
+5. Create additional **Self-hosted** apps for public endpoints with **Bypass** policies:
+   - `stats.example.com/v1/events` (SDK ingest)
+   - `stats.example.com/v1/health` (health check)
+   - `stats.example.com/v1/doc` (API docs)
 
 The `CF_ACCESS_TEAM_DOMAIN` secret tells the worker to validate the
 `Cf-Access-Jwt-Assertion` header. Without it, the worker rejects all

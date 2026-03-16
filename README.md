@@ -190,9 +190,53 @@ See sub-READMEs for details:
 
 ## Deploy
 
-See [docs/deploy.md](docs/deploy.md) for production deployment (Cloudflare
-Workers + D1, custom domain, Zero Trust auth). The `wrangler.toml` is ready
-to go -- create a D1 database, set one secret, and run `wrangler deploy`.
+### Prerequisites
+
+Before deploying, you'll need:
+
+**Cloudflare setup:**
+
+1. **Cloudflare account** -- [sign up free](https://dash.cloudflare.com/sign-up).
+2. **Domain on Cloudflare** -- a domain using Cloudflare nameservers. You can
+   [register a new domain](https://www.cloudflare.com/products/registrar/)
+   or [add an existing one](https://developers.cloudflare.com/fundamentals/setup/manage-domains/add-site/).
+3. **Zero Trust team** -- set up a [Cloudflare Zero Trust](https://one.dash.cloudflare.com/)
+   organization (free for up to 50 users). Under Settings > Authentication, add
+   at least one identity provider (Google, GitHub, one-time PIN, etc.).
+4. **API token** -- create a [Custom API Token](https://dash.cloudflare.com/profile/api-tokens)
+   (Create Custom Token) with these settings:
+   - **Permissions:**
+     - Account | D1 | Edit
+     - Account | Worker Scripts | Edit
+     - Zone | Access: Apps and Policies | Edit
+   - **Zone Resources:** Include | Specific zone | *your domain*
+   
+   Export it as `CLOUDFLARE_API_TOKEN` or paste it when prompted during install.
+
+**Local tooling:**
+
+- [bun](https://bun.sh) -- everything else is installed automatically
+
+### Deploy script
+
+```bash
+./deploy.sh install    # Create D1, configure domain + Access, build, deploy
+./deploy.sh upgrade    # Apply new migrations, rebuild, redeploy
+./deploy.sh destroy    # Tear down worker, D1 database, and Access config
+```
+
+The install script handles `bun install` and `wrangler login` automatically,
+then prompts for everything interactively. To skip prompts, set environment
+variables:
+
+```bash
+export CLOUDFLARE_API_TOKEN=xxxx
+export CF_ACCESS_TEAM_DOMAIN=myteam         # <team>.cloudflareaccess.com
+export STATSFACTORY_DOMAIN=stats.example.com
+./deploy.sh install
+```
+
+See [docs/deploy.md](docs/deploy.md) for manual deployment steps and CI/CD setup.
 
 ## Configuration
 

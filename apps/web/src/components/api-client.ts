@@ -29,6 +29,32 @@ export function clearSelectedAppId(): void {
 type QueryParams = Record<string, string | string[] | undefined>;
 
 /**
+ * Redirect the browser to the Cloudflare Access login page.
+ *
+ * CF Access exposes `/cdn-cgi/access/login` on any protected domain.
+ * After successful authentication, CF Access redirects back to the
+ * original URL automatically.
+ */
+function redirectToLogin(): never {
+  const loginUrl = new URL("/cdn-cgi/access/login", window.location.origin);
+  // Preserve the current page so CF Access can redirect back after auth
+  loginUrl.searchParams.set("redirect_url", window.location.href);
+  window.location.href = loginUrl.toString();
+  // Throw to abort any calling code — the page is navigating away
+  throw new Error("Redirecting to login...");
+}
+
+/**
+ * Check a fetch response for authentication errors and redirect to
+ * Cloudflare Access login if the user's session has expired or is missing.
+ */
+function handleAuthError(res: Response): void {
+  if (res.status === 401 || res.status === 403) {
+    redirectToLogin();
+  }
+}
+
+/**
  * Make a GET request to the query API.
  * No Bearer token needed — Cloudflare Access handles auth at the edge.
  */
@@ -50,6 +76,8 @@ export async function queryApi<T>(path: string, params?: QueryParams): Promise<T
   const res = await fetch(url.toString(), {
     credentials: "same-origin", // send CF Access cookies
   });
+
+  handleAuthError(res);
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -81,6 +109,8 @@ export async function mutateApi<T>(
   }
 
   const res = await fetch(url.toString(), init);
+
+  handleAuthError(res);
 
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));

@@ -11,6 +11,7 @@
     "clean": "turbo clean"
   },
   "devDependencies": {
+    "cloudflare": "^5.2.0",
     "turbo": "^2"
   },
   "trustedDependencies": ["esbuild", "sharp", "workerd"],
