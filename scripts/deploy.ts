@@ -98,6 +98,8 @@ async function getClient(): Promise<Cloudflare> {
       "  Token name:     statsfactory",
       "  Permissions:    Account | D1 | Edit",
       "                  Account | Worker Scripts | Edit",
+      "                  Zone | Workers Routes | Edit",
+      "                  Zone | DNS | Edit",
       "                  Zone | Access: Apps and Policies | Edit",
       "  Zone Resources: Include | Specific zone | <your domain>",
       "",
@@ -137,6 +139,8 @@ async function getAccountId(): Promise<string> {
           "Required permissions:\n" +
           "  Account | D1 | Edit\n" +
           "  Account | Worker Scripts | Edit\n" +
+          "  Zone | Workers Routes | Edit\n" +
+          "  Zone | DNS | Edit\n" +
           "  Zone | Access: Apps and Policies | Edit\n\n" +
           "Create a token at: https://dash.cloudflare.com/profile/api-tokens",
       );
@@ -154,7 +158,9 @@ function formatApiError(e: unknown, context: string): never {
   if (e instanceof PermissionDeniedError) {
     const permHints: Record<string, string> = {
       d1: "Account | D1 | Edit",
-      zone: "Zone | DNS | Read (or broader zone access)",
+      zone: "Zone | DNS | Edit (or broader zone access)",
+      route: "Zone | Workers Routes | Edit",
+      dns: "Zone | DNS | Edit",
       access: "Zone | Access: Apps and Policies | Edit",
       secret: "Account | Worker Scripts | Edit",
       worker: "Account | Worker Scripts | Edit",

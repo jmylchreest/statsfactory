@@ -208,6 +208,8 @@ Before deploying, you'll need:
    - **Permissions:**
      - Account | D1 | Edit
      - Account | Worker Scripts | Edit
+     - Zone | Workers Routes | Edit
+     - Zone | DNS | Edit
      - Zone | Access: Apps and Policies | Edit
    - **Zone Resources:** Include | Specific zone | *your domain*
    
