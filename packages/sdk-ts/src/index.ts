@@ -223,7 +223,7 @@ export class StatsFactory {
     if (!config.serverUrl) throw new Error("StatsFactory: serverUrl is required");
     if (!config.appKey) throw new Error("StatsFactory: appKey is required");
 
-    this.config = config;
+    this.config = { ...config, serverUrl: config.serverUrl.replace(/\/+$/, "") };
     this.sessionId = config.sessionId ?? getOrCreateSessionId();
     this.userAgent = buildUserAgent(config);
     this.fetchFn = config.fetch ?? globalThis.fetch.bind(globalThis);

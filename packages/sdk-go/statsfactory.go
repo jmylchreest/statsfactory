@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"net/http"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 )
@@ -121,6 +122,8 @@ type Client struct {
 
 // New creates a new statsfactory Client and starts the background flush worker.
 func New(cfg Config) *Client {
+	cfg.ServerURL = strings.TrimRight(cfg.ServerURL, "/")
+
 	if cfg.FlushInterval <= 0 {
 		cfg.FlushInterval = defaultFlushInterval
 	}

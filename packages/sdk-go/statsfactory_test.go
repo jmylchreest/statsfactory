@@ -124,6 +124,30 @@ func TestFlushSendsEvents(t *testing.T) {
 	}
 }
 
+func TestTrailingSlashInServerURL(t *testing.T) {
+	srv, captured := mockServer(t)
+
+	c := New(Config{
+		ServerURL:     srv.URL + "/",
+		AppKey:        "key",
+		FlushInterval: time.Hour,
+	})
+	defer c.Close()
+
+	c.Track("test", nil)
+	if err := c.Flush(context.Background()); err != nil {
+		t.Fatalf("Flush error: %v", err)
+	}
+
+	reqs := getCaptured(captured)
+	if len(reqs) != 1 {
+		t.Fatalf("got %d requests, want 1", len(reqs))
+	}
+	if reqs[0].Path != "/v1/events" {
+		t.Errorf("Path = %q, want /v1/events (trailing slash not stripped)", reqs[0].Path)
+	}
+}
+
 func TestFlushBatchesByMaxSize(t *testing.T) {
 	srv, captured := mockServer(t)
 
