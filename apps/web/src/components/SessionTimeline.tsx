@@ -299,7 +299,7 @@ export default function SessionTimeline() {
             )}
 
             {filteredSessions.length > 0 && (
-              <div className="divide-y divide-gray-800/50 max-h-[600px] overflow-y-auto">
+              <div className="divide-y divide-gray-800/50">
                 {filteredSessions.map((s) => (
                   <button
                     key={s.session_id}
