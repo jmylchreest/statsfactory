@@ -34,7 +34,7 @@ import { z } from "@hono/zod-openapi";
 
 export const MAX_EVENTS_PER_BATCH = 25;
 export const MAX_DIMENSIONS_PER_EVENT = 25;
-export const MAX_DIM_VALUE_LENGTH = 256;
+export const MAX_DIM_VALUE_LENGTH = 1024;
 export const MAX_FILTERS = 10;
 export const MAX_LIMIT = 1000;
 export const DEFAULT_LIMIT = 100;
@@ -88,12 +88,25 @@ export const IngestEventSchema = z
       description: "Client-provided distinct user identifier.",
     }),
     dimensions: z
-      .record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
+      .record(
+        z.string(),
+        z.union([
+          z.string(),
+          z.number(),
+          z.boolean(),
+          z.array(z.union([z.string(), z.number(), z.boolean()])),
+        ]),
+      )
       .optional()
       .openapi({
-        example: { "plugin.name": "kitty", "plugin.version": 2, enabled: true },
+        example: {
+          "plugin.name": "kitty",
+          "plugin.version": 2,
+          enabled: true,
+          "output.plugins": ["kitty", "waybar"],
+        },
         description:
-          `Key-value dimensions. Keys: lowercase alphanumeric + dots + underscores, max 64 chars. Values: string (max ${MAX_DIM_VALUE_LENGTH} chars), number, or boolean. Max ${MAX_DIMENSIONS_PER_EVENT} user-provided dimensions per event. The server may add enriched dimensions (geo, UA). Total statement count per batch is capped at 50 (D1 free tier limit).`,
+          `Key-value dimensions. Keys: lowercase alphanumeric + dots + underscores, max 64 chars. Values: string (max ${MAX_DIM_VALUE_LENGTH} chars), number, boolean, or array of scalars (JSON-serialized, max ${MAX_DIM_VALUE_LENGTH} chars). Max ${MAX_DIMENSIONS_PER_EVENT} user-provided dimensions per event.`,
       }),
   })
   .openapi("IngestEvent");
@@ -130,16 +143,27 @@ export const IngestResponseSchema = z
 // ── Query schemas ───────────────────────────────────────────────────────────
 
 /** Parse a "dim_key:value" filter string into { key, value }. */
+export const FILTER_OPERATORS = ["eq", "neq", "contains", "in"] as const;
+export type FilterOperator = (typeof FILTER_OPERATORS)[number];
+
 export const DimensionFilterSchema = z
   .object({
     key: z.string(),
+    op: z.enum(FILTER_OPERATORS),
     value: z.string(),
   })
   .openapi("DimensionFilter");
 
 /**
- * Parse raw filter query params ("dim_key:value" strings) into DimensionFilter[].
- * Exported for reuse in route handlers and tests.
+ * Parse filter query params into structured filters.
+ *
+ * Format: `key:op:value` where op is one of eq, neq, contains, in.
+ *
+ * Examples:
+ *   geo.country:eq:NZ
+ *   output.plugins:contains:kitty
+ *   geo.country:in:NZ,AU,GB
+ *   geo.country:neq:US
  */
 export function parseFilters(raw: string | string[] | undefined): z.infer<typeof DimensionFilterSchema>[] {
   if (!raw) return [];
@@ -147,13 +171,24 @@ export function parseFilters(raw: string | string[] | undefined): z.infer<typeof
   const filters: z.infer<typeof DimensionFilterSchema>[] = [];
 
   for (const f of arr) {
-    const colonIdx = f.indexOf(":");
-    if (colonIdx <= 0) continue; // skip malformed
-    const key = f.slice(0, colonIdx);
-    const value = f.slice(colonIdx + 1);
-    if (key && value !== undefined) {
-      filters.push({ key, value });
-    }
+    // Find first colon (key separator)
+    const firstColon = f.indexOf(":");
+    if (firstColon <= 0) continue; // skip malformed
+
+    const key = f.slice(0, firstColon);
+    const rest = f.slice(firstColon + 1);
+
+    // Find second colon (op:value separator)
+    const secondColon = rest.indexOf(":");
+    if (secondColon <= 0) continue; // must have op:value
+
+    const maybeOp = rest.slice(0, secondColon);
+    const value = rest.slice(secondColon + 1);
+
+    if (!(FILTER_OPERATORS as readonly string[]).includes(maybeOp)) continue; // unknown operator
+    if (value === undefined || value === "") continue;
+
+    filters.push({ key, op: maybeOp as FilterOperator, value });
   }
 
   return filters;
@@ -186,13 +221,14 @@ export const EventsQuerySchema = z
       .union([z.string(), z.array(z.string())])
       .optional()
       .openapi({
-        example: "geo.country:NZ",
-        description: 'Dimension filter(s) in "dim_key:value" format. Repeatable.',
+        example: "geo.country:eq:NZ",
+        description:
+          'Dimension filter(s) in "key:op:value" format. Operators: eq, neq, contains, in. For "in", comma-separate values (e.g. geo.country:in:NZ,AU). Repeatable.',
       }),
   })
   .openapi("EventsQuery");
 
-/** Response for GET /v1/query/events. */
+
 export const EventsResponseSchema = z
   .object({
     time_series: z.array(
@@ -288,8 +324,8 @@ export const BreakdownQuerySchema = z
       .union([z.string(), z.array(z.string())])
       .optional()
       .openapi({
-        example: "geo.country:NZ",
-        description: 'Dimension filter(s) in "dim_key:value" format. Repeatable.',
+        example: "geo.country:eq:NZ",
+        description: 'Dimension filter(s) in "key:op:value" format. Operators: eq, neq, contains, in. Repeatable.',
       }),
     limit: z
       .string()
@@ -353,8 +389,8 @@ export const MatrixQuerySchema = z
       .union([z.string(), z.array(z.string())])
       .optional()
       .openapi({
-        example: "geo.country:NZ",
-        description: 'Dimension filter(s) in "dim_key:value" format. Repeatable.',
+        example: "geo.country:eq:NZ",
+        description: 'Dimension filter(s) in "key:op:value" format. Operators: eq, neq, contains, in. Repeatable.',
       }),
     limit: z
       .string()
@@ -661,7 +697,8 @@ export const HealthResponseSchema = z
  * Determine the dim_type for a dimension value.
  * Preserved from validation.ts — used by the ingest route.
  */
-export function dimType(value: string | number | boolean): "string" | "number" | "boolean" {
+export function dimType(value: string | number | boolean | unknown[]): "string" | "number" | "boolean" | "array" {
+  if (Array.isArray(value)) return "array";
   const t = typeof value;
   if (t === "number") return "number";
   if (t === "boolean") return "boolean";
@@ -720,6 +757,26 @@ export function validateEvents(events: IngestEvent[]): {
           });
           dimValid = false;
           break;
+        }
+
+        if (Array.isArray(val)) {
+          if (val.length === 0) {
+            errors.push({
+              index: i,
+              message: `Dimension "${key}" array must not be empty`,
+            });
+            dimValid = false;
+            break;
+          }
+          const serialized = JSON.stringify(val);
+          if (serialized.length > MAX_DIM_VALUE_LENGTH) {
+            errors.push({
+              index: i,
+              message: `Dimension "${key}" serialized array exceeds ${MAX_DIM_VALUE_LENGTH} chars`,
+            });
+            dimValid = false;
+            break;
+          }
         }
       }
 

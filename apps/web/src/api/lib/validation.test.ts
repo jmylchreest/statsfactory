@@ -26,6 +26,12 @@ describe("dimType", () => {
     expect(dimType(true)).toBe("boolean");
     expect(dimType(false)).toBe("boolean");
   });
+
+  it("returns 'array' for arrays", () => {
+    expect(dimType(["kitty", "waybar"])).toBe("array");
+    expect(dimType([1, 2, 3])).toBe("array");
+    expect(dimType(["hello", 42, true])).toBe("array");
+  });
 });
 
 describe("IngestRequestSchema (Zod)", () => {
@@ -138,7 +144,7 @@ describe("IngestRequestSchema (Zod)", () => {
       expect(result.success).toBe(false);
     });
 
-    it("accepts string, number, and boolean dimension values", () => {
+    it("accepts string, number, boolean, and array dimension values", () => {
       const result = IngestRequestSchema.safeParse({
         events: [
           {
@@ -147,11 +153,26 @@ describe("IngestRequestSchema (Zod)", () => {
               str_dim: "hello",
               num_dim: 42,
               bool_dim: true,
+              arr_dim: ["kitty", "waybar"],
             },
           },
         ],
       });
       expect(result.success).toBe(true);
+    });
+
+    it("rejects nested arrays in dimension values", () => {
+      const result = IngestRequestSchema.safeParse({
+        events: [
+          {
+            event: "test",
+            dimensions: {
+              nested: [["a", "b"]],
+            },
+          },
+        ],
+      });
+      expect(result.success).toBe(false);
     });
   });
 });
@@ -215,22 +236,68 @@ describe("validateEvents (per-event partial validation)", () => {
       expect(errors).toHaveLength(0);
     });
 
-    it("rejects string values exceeding 256 chars", () => {
+    it("rejects string values exceeding 1024 chars", () => {
       const { valid, errors } = validateEvents([
         {
           event: "test",
-          dimensions: { long_val: "x".repeat(257) },
+          dimensions: { long_val: "x".repeat(1025) },
         },
       ]);
       expect(valid).toHaveLength(0);
-      expect(errors[0].message).toMatch(/exceeds 256 chars/);
+      expect(errors[0].message).toMatch(/exceeds 1024 chars/);
     });
 
-    it("accepts string values at exactly 256 chars", () => {
+    it("accepts string values at exactly 1024 chars", () => {
       const { valid, errors } = validateEvents([
         {
           event: "test",
-          dimensions: { long_val: "x".repeat(256) },
+          dimensions: { long_val: "x".repeat(1024) },
+        },
+      ]);
+      expect(valid).toHaveLength(1);
+      expect(errors).toHaveLength(0);
+    });
+
+    it("rejects empty array dimension values", () => {
+      const { valid, errors } = validateEvents([
+        {
+          event: "test",
+          dimensions: { tags: [] },
+        },
+      ]);
+      expect(valid).toHaveLength(0);
+      expect(errors[0].message).toMatch(/array must not be empty/);
+    });
+
+    it("rejects array dimension values exceeding serialized length limit", () => {
+      // Create an array whose JSON serialization exceeds 1024 chars
+      const longArray = Array.from({ length: 200 }, (_, i) => `long_value_${i}_${"x".repeat(10)}`);
+      const { valid, errors } = validateEvents([
+        {
+          event: "test",
+          dimensions: { tags: longArray },
+        },
+      ]);
+      expect(valid).toHaveLength(0);
+      expect(errors[0].message).toMatch(/serialized array exceeds 1024 chars/);
+    });
+
+    it("accepts valid array dimension values", () => {
+      const { valid, errors } = validateEvents([
+        {
+          event: "test",
+          dimensions: { tags: ["kitty", "waybar"] },
+        },
+      ]);
+      expect(valid).toHaveLength(1);
+      expect(errors).toHaveLength(0);
+    });
+
+    it("accepts array with mixed scalar types", () => {
+      const { valid, errors } = validateEvents([
+        {
+          event: "test",
+          dimensions: { mixed: ["hello", 42, true] },
         },
       ]);
       expect(valid).toHaveLength(1);

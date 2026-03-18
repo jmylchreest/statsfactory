@@ -101,12 +101,13 @@ ingestRouter.openapi(ingestRoute, async (c) => {
   // Events sharing the same event_key + event name are merged into one.
   // Events without event_key are treated as standalone (one per item).
 
+  type DimValue = string | number | boolean | (string | number | boolean)[];
   type MergedEvent = {
     event: string;
     timestamp: string;
     sessionId: string | null;
     distinctId: string | null;
-    dims: Record<string, string | number | boolean>;
+    dims: Record<string, DimValue>;
     indices: number[]; // original batch indices (for error reporting)
   };
 
@@ -118,7 +119,7 @@ ingestRouter.openapi(ingestRoute, async (c) => {
 
     // Merge user dimensions + server-enriched dimensions
     // User dimensions take precedence (they can override enriched ones)
-    const evDims: Record<string, string | number | boolean> = {
+    const evDims: Record<string, DimValue> = {
       ...enrichedDims,
       ...(ev.dimensions ?? {}),
     };
@@ -204,7 +205,7 @@ ingestRouter.openapi(ingestRoute, async (c) => {
       dimRows.push({
         eventId,
         dimKey: key,
-        dimValue: String(value),
+        dimValue: Array.isArray(value) ? JSON.stringify(value) : String(value),
         dimType: dimType(value),
       });
     }
@@ -219,7 +220,8 @@ ingestRouter.openapi(ingestRoute, async (c) => {
   const MAX_STATEMENTS = 50;
 
   try {
-    const statements: Parameters<typeof db.batch>[0] = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Drizzle batch expects non-empty tuple; we build dynamically
+    const statements: any[] = [];
 
     for (let i = 0; i < eventRows.length; i += EVENT_CHUNK) {
       statements.push(db.insert(events).values(eventRows.slice(i, i + EVENT_CHUNK)));

@@ -16,6 +16,7 @@ import type {
   MatrixQueryParams,
   Granularity,
   DimensionFilter,
+  FilterOperator,
 } from "./schemas";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -48,8 +49,54 @@ function eventsWhere(appId: string, params: { from: string; to: string; eventNam
 }
 
 /**
+ * Build the value-matching condition for a single filter, based on operator.
+ *
+ * For array dimensions, `contains` checks if an element exists in the JSON array.
+ * For scalar dimensions, `contains` does a LIKE substring match.
+ * The `in` operator matches if the scalar value is in a comma-separated set,
+ * or if any array element is in the set.
+ */
+function filterCondition(alias: string, f: DimensionFilter): ReturnType<typeof sql> {
+  switch (f.op) {
+    case "eq":
+      return sql`${sql.raw(alias)}.dim_value = ${f.value}`;
+
+    case "neq":
+      return sql`${sql.raw(alias)}.dim_value != ${f.value}`;
+
+    case "contains":
+      // For arrays: EXISTS (SELECT 1 FROM json_each(dim_value) WHERE value = ?)
+      // For scalars: dim_value LIKE '%?%'
+      // We use OR to handle both cases transparently (dim_type can be checked, but
+      // the json_each approach is safe on non-JSON text — it just returns no rows).
+      return sql`(
+        EXISTS (SELECT 1 FROM json_each(${sql.raw(alias)}.dim_value) WHERE json_each.value = ${f.value})
+        OR (${sql.raw(alias)}.dim_type != 'array' AND ${sql.raw(alias)}.dim_value LIKE ${"%" + f.value + "%"})
+      )`;
+
+    case "in": {
+      const values = f.value.split(",").map((v) => v.trim()).filter(Boolean);
+      if (values.length === 0) return sql`0`; // no values = no match
+      const valuePlaceholders = sql.join(values.map((v) => sql`${v}`), sql`, `);
+      // For arrays: any element in the set. For scalars: value in the set.
+      return sql`(
+        EXISTS (SELECT 1 FROM json_each(${sql.raw(alias)}.dim_value) WHERE json_each.value IN (${valuePlaceholders}))
+        OR (${sql.raw(alias)}.dim_type != 'array' AND ${sql.raw(alias)}.dim_value IN (${valuePlaceholders}))
+      )`;
+    }
+
+    default:
+      return sql`${sql.raw(alias)}.dim_value = ${f.value}`;
+  }
+}
+
+/**
  * Filter events by dimension criteria using self-joins.
  * Returns event IDs matching ALL dimension filters, or null if no filters.
+ *
+ * Each filter becomes an INNER JOIN on event_dimensions with operator-specific
+ * value matching (eq, neq, contains, in). Array dimensions are supported via
+ * SQLite json_each() for contains/in operators.
  */
 async function filteredEventIds(
   db: Database,
@@ -59,17 +106,29 @@ async function filteredEventIds(
   if (params.filters.length === 0) return null;
 
   // Build a query that self-joins event_dimensions for each filter.
-  // Each filter becomes an INNER JOIN requiring that dimension key/value exists.
-  const joinParts = params.filters.map(
-    (f, i) =>
-      sql`INNER JOIN event_dimensions ${sql.raw(`df${i}`)} ON ${sql.raw(`df${i}`)}.event_id = e.id AND ${sql.raw(`df${i}`)}.dim_key = ${f.key} AND ${sql.raw(`df${i}`)}.dim_value = ${f.value}`,
-  );
+  // neq uses LEFT JOIN + IS NULL pattern to find events that DON'T have the value.
+  const joinParts = params.filters.map((f, i) => {
+    const alias = `df${i}`;
+    if (f.op === "neq") {
+      // LEFT JOIN: find events where the dim either doesn't exist or has a different value
+      return sql`LEFT JOIN event_dimensions ${sql.raw(alias)} ON ${sql.raw(alias)}.event_id = e.id AND ${sql.raw(alias)}.dim_key = ${f.key} AND ${sql.raw(alias)}.dim_value = ${f.value}`;
+    }
+    // INNER JOIN with operator-specific condition
+    return sql`INNER JOIN event_dimensions ${sql.raw(alias)} ON ${sql.raw(alias)}.event_id = e.id AND ${sql.raw(alias)}.dim_key = ${f.key} AND ${filterCondition(alias, f)}`;
+  });
 
   const conditions = [
     sql`e.app_id = ${appId}`,
     sql`e.timestamp >= ${params.from}`,
     sql`e.timestamp <= ${params.to}`,
   ];
+
+  // For neq: add WHERE df{i}.event_id IS NULL (no matching row = value doesn't match)
+  params.filters.forEach((f, i) => {
+    if (f.op === "neq") {
+      conditions.push(sql`${sql.raw(`df${i}`)}.event_id IS NULL`);
+    }
+  });
 
   // Support both single eventName and array eventNames
   const names = params.eventNames ?? (params.eventName ? [params.eventName] : []);
@@ -85,7 +144,7 @@ async function filteredEventIds(
   }
 
   const query = sql`
-    SELECT e.id
+    SELECT DISTINCT e.id
     FROM events e
     ${sql.join(joinParts, sql` `)}
     WHERE ${sql.join(conditions, sql` AND `)}
@@ -227,6 +286,11 @@ export type BreakdownRow = {
 
 /**
  * Single dimension breakdown: for a given event + dim_key, count events per dim_value.
+ *
+ * For array dimensions, uses json_each() to explode array elements so each
+ * element is counted separately. Duplicate elements within a single array
+ * are preserved (e.g. ["a","a"] counts "a" twice). Mixed scalar + array
+ * values for the same dim_key are handled via UNION ALL.
  */
 export async function queryBreakdown(
   db: Database,
@@ -242,32 +306,48 @@ export async function queryBreakdown(
 
   if (eventIds !== null && eventIds.length === 0) return [];
 
-  const conditions = [
-    eq(events.appId, appId),
-    gte(events.timestamp, params.from),
-    lte(events.timestamp, params.to),
-    eq(events.eventName, params.eventName),
-    eq(eventDimensions.dimKey, params.dimKey),
+  // Base conditions shared by both branches
+  const baseConds = [
+    sql`e.app_id = ${appId}`,
+    sql`e.timestamp >= ${params.from}`,
+    sql`e.timestamp <= ${params.to}`,
+    sql`e.event_name = ${params.eventName}`,
+    sql`d.dim_key = ${params.dimKey}`,
   ];
-
   if (eventIds !== null) {
-    conditions.push(inArray(events.id, eventIds));
+    baseConds.push(
+      sql`e.id IN (${sql.join(eventIds.map((id) => sql`${id}`), sql`, `)})`,
+    );
   }
 
-  const rows = await db
-    .select({
-      value: eventDimensions.dimValue,
-      count: sql<number>`count(*)`,
-    })
-    .from(eventDimensions)
-    .innerJoin(events, eq(eventDimensions.eventId, events.id))
-    .where(and(...conditions))
-    .groupBy(eventDimensions.dimValue)
-    .orderBy(sql`count(*) desc`)
-    .limit(params.limit);
+  const whereSql = sql.join(baseConds, sql` AND `);
 
-  return rows.map((r) => ({
-    value: r.value,
+  // UNION ALL: scalar values + exploded array values
+  const query = sql`
+    SELECT dim_value, SUM(cnt) AS count FROM (
+      SELECT d.dim_value AS dim_value, COUNT(*) AS cnt
+      FROM events e
+      INNER JOIN event_dimensions d ON d.event_id = e.id
+      WHERE ${whereSql} AND d.dim_type != 'array'
+      GROUP BY d.dim_value
+
+      UNION ALL
+
+      SELECT je.value AS dim_value, COUNT(*) AS cnt
+      FROM events e
+      INNER JOIN event_dimensions d ON d.event_id = e.id,
+      json_each(d.dim_value) je
+      WHERE ${whereSql} AND d.dim_type = 'array'
+      GROUP BY je.value
+    )
+    GROUP BY dim_value
+    ORDER BY count DESC
+    LIMIT ${params.limit}
+  `;
+
+  const rows = await db.all(query);
+  return (rows as Array<{ dim_value: string; count: number }>).map((r) => ({
+    value: String(r.dim_value),
     count: Number(r.count),
   }));
 }
@@ -280,6 +360,10 @@ export type MatrixRow = Record<string, string | number>;
  * Self-joins event_dimensions for each requested dimension key to produce
  * a pivot-table-style result. Uses aliased columns (dim0, dim1, dim2) so
  * each dimension's value has a unique column name in the raw result.
+ *
+ * Array dimensions are handled with CASE/json_each: for array-typed dims,
+ * we LEFT JOIN json_each() to explode values. For scalars, we use dim_value
+ * directly. This gives correct cross-tabulation with mixed scalar + array dims.
  *
  * Example with dimensions=["plugin.name", "plugin.status"]:
  * Returns: [{ "plugin.name": "kitty", "plugin.status": "ok", count: 123 }, ...]
@@ -302,22 +386,34 @@ export async function queryMatrix(
   const hasEventNameDim = params.dimensions.includes("event_name");
   const realDims = params.dimensions.filter((d) => d !== "event_name");
 
-  // Build SELECT columns with unique aliases: d0.dim_value AS dim0, d1.dim_value AS dim1, ...
+  // For each real dimension, we:
+  // 1. INNER JOIN event_dimensions (aliased d0, d1, ...) to get the dim row
+  // 2. LEFT JOIN json_each() (aliased je0, je1, ...) to explode arrays
+  // 3. SELECT: COALESCE(je{i}.value, d{i}.dim_value) — uses exploded value for arrays, raw for scalars
   const selectParts: ReturnType<typeof sql>[] = [];
   if (hasEventNameDim) {
     selectParts.push(sql`e.event_name AS event_name_dim`);
   }
   selectParts.push(
     ...realDims.map(
-      (_, i) => sql`${sql.raw(`d${i}`)}.dim_value AS ${sql.raw(`dim${i}`)}`,
+      (_, i) =>
+        sql`CASE WHEN ${sql.raw(`d${i}`)}.dim_type = 'array' THEN ${sql.raw(`je${i}`)}.value ELSE ${sql.raw(`d${i}`)}.dim_value END AS ${sql.raw(`dim${i}`)}`,
     ),
   );
 
-  // Build JOINs: each real dimension is a self-join on event_dimensions
-  const joinParts = realDims.map(
-    (dimKey, i) =>
+  // Build JOINs
+  const joinParts: ReturnType<typeof sql>[] = [];
+  for (let i = 0; i < realDims.length; i++) {
+    const dimKey = realDims[i];
+    // INNER JOIN the dimension row
+    joinParts.push(
       sql`INNER JOIN event_dimensions ${sql.raw(`d${i}`)} ON e.id = ${sql.raw(`d${i}`)}.event_id AND ${sql.raw(`d${i}`)}.dim_key = ${dimKey}`,
-  );
+    );
+    // LEFT JOIN json_each for array explosion (produces 1 row for scalars via CASE above)
+    joinParts.push(
+      sql`LEFT JOIN json_each(CASE WHEN ${sql.raw(`d${i}`)}.dim_type = 'array' THEN ${sql.raw(`d${i}`)}.dim_value ELSE NULL END) ${sql.raw(`je${i}`)}`,
+    );
+  }
 
   // Build GROUP BY
   const groupByParts: ReturnType<typeof sql>[] = [];
@@ -325,7 +421,9 @@ export async function queryMatrix(
     groupByParts.push(sql.raw("e.event_name"));
   }
   groupByParts.push(
-    ...realDims.map((_, i) => sql.raw(`d${i}.dim_value`)),
+    ...realDims.map(
+      (_, i) => sql.raw(`dim${i}`),
+    ),
   );
 
   // WHERE clause
@@ -355,6 +453,13 @@ export async function queryMatrix(
       )})`,
     );
   }
+
+  // For scalar dims, json_each produces NULL — filter those out so scalars
+  // still appear (the CASE handles it, but we also need to handle the case
+  // where json_each produces no rows for scalar dims). We need: for array dims,
+  // je{i}.value IS NOT NULL; for scalar dims, no constraint.
+  // Actually, LEFT JOIN json_each(NULL) produces exactly 1 row with all NULLs,
+  // which is correct — the CASE falls through to dim_value. No extra WHERE needed.
 
   const query = sql`
     SELECT ${sql.join([...selectParts, sql`COUNT(*) AS count`], sql`, `)}

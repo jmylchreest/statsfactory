@@ -22,34 +22,75 @@ describe("parseFilters", () => {
     expect(parseFilters("")).toEqual([]);
   });
 
-  it("parses a single filter string", () => {
-    expect(parseFilters("geo.country:NZ")).toEqual([
-      { key: "geo.country", value: "NZ" },
+  it("parses a single filter with eq operator", () => {
+    expect(parseFilters("geo.country:eq:NZ")).toEqual([
+      { key: "geo.country", op: "eq", value: "NZ" },
+    ]);
+  });
+
+  it("parses neq operator", () => {
+    expect(parseFilters("geo.country:neq:US")).toEqual([
+      { key: "geo.country", op: "neq", value: "US" },
+    ]);
+  });
+
+  it("parses contains operator", () => {
+    expect(parseFilters("output.plugins:contains:kitty")).toEqual([
+      { key: "output.plugins", op: "contains", value: "kitty" },
+    ]);
+  });
+
+  it("parses in operator with comma-separated values", () => {
+    expect(parseFilters("geo.country:in:NZ,AU,GB")).toEqual([
+      { key: "geo.country", op: "in", value: "NZ,AU,GB" },
     ]);
   });
 
   it("parses an array of filter strings", () => {
-    expect(parseFilters(["geo.country:NZ", "plugin.status:ok"])).toEqual([
-      { key: "geo.country", value: "NZ" },
-      { key: "plugin.status", value: "ok" },
+    expect(parseFilters(["geo.country:eq:NZ", "plugin.status:eq:ok"])).toEqual([
+      { key: "geo.country", op: "eq", value: "NZ" },
+      { key: "plugin.status", op: "eq", value: "ok" },
     ]);
   });
 
-  it("handles values containing colons", () => {
-    expect(parseFilters("url:https://example.com")).toEqual([
-      { key: "url", value: "https://example.com" },
+  it("handles values containing colons (e.g. URLs)", () => {
+    expect(parseFilters("url:eq:https://example.com")).toEqual([
+      { key: "url", op: "eq", value: "https://example.com" },
     ]);
   });
 
-  it("skips malformed filters without a colon", () => {
-    expect(parseFilters(["good.key:value", "nocolon", "another:ok"])).toEqual([
-      { key: "good.key", value: "value" },
-      { key: "another", value: "ok" },
-    ]);
+  it("skips filters without operator (old key:value format)", () => {
+    expect(parseFilters("geo.country:NZ")).toEqual([]);
+  });
+
+  it("skips malformed filters without any colon", () => {
+    expect(parseFilters("nocolon")).toEqual([]);
+  });
+
+  it("skips filters with unknown operator", () => {
+    expect(parseFilters("geo.country:like:NZ")).toEqual([]);
   });
 
   it("skips filters with colon at position 0", () => {
-    expect(parseFilters(":value")).toEqual([]);
+    expect(parseFilters(":eq:value")).toEqual([]);
+  });
+
+  it("skips filters with empty value", () => {
+    expect(parseFilters("geo.country:eq:")).toEqual([]);
+  });
+
+  it("mixed valid and invalid filters", () => {
+    expect(
+      parseFilters([
+        "geo.country:eq:NZ",
+        "nocolon",
+        "bad:format",
+        "plugin.name:contains:kitty",
+      ]),
+    ).toEqual([
+      { key: "geo.country", op: "eq", value: "NZ" },
+      { key: "plugin.name", op: "contains", value: "kitty" },
+    ]);
   });
 });
 
@@ -233,7 +274,7 @@ describe("BreakdownQuerySchema", () => {
   it("accepts filters", () => {
     const result = BreakdownQuerySchema.safeParse({
       ...validParams,
-      filter: "geo.country:NZ",
+      filter: "geo.country:eq:NZ",
     });
     expect(result.success).toBe(true);
   });
@@ -318,7 +359,7 @@ describe("MatrixQuerySchema", () => {
   it("accepts filters", () => {
     const result = MatrixQuerySchema.safeParse({
       ...validParams,
-      filter: ["geo.country:NZ"],
+      filter: ["geo.country:eq:NZ"],
     });
     expect(result.success).toBe(true);
   });

@@ -66,7 +66,7 @@ export const eventDimensions = sqliteTable(
     dimKey: text("dim_key").notNull(),
     dimValue: text("dim_value").notNull(),
     dimType: text("dim_type", {
-      enum: ["string", "number", "boolean"],
+      enum: ["string", "number", "boolean", "array"],
     })
       .notNull()
       .default("string"),
