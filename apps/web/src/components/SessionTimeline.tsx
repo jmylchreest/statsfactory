@@ -444,7 +444,7 @@ export default function SessionTimeline() {
                                 )}
                                 {batch && (
                                   <span className="text-xs text-gray-600 font-mono tabular-nums">
-                                    B{batch.batchNum}/{batch.totalBatches} E{batch.eventIndex}/{batch.eventTotal}
+                                    E{idx + 1}/{timelineEvents.length} B{batch.batchNum}/{batch.totalBatches}
                                   </span>
                                 )}
                                 <svg
