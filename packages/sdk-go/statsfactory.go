@@ -40,7 +40,9 @@ const maxBatchSize = 25
 const defaultFlushInterval = 30 * time.Second
 
 // Dims is a map of dimension key-value pairs attached to an event.
-// Values can be string, int, float64, or bool.
+// Values can be string, int, float64, bool, or a slice of these types
+// (e.g. []string{"kitty", "waybar"} or []any{"kitty", 42, true}).
+// Array values are JSON-serialized on the server and exploded at query time.
 type Dims map[string]any
 
 // Config configures a statsfactory Client.
@@ -197,7 +199,7 @@ func (c *Client) TrackWithOptions(eventName string, dims Dims, opts TrackOptions
 	if len(dims) > 0 {
 		ev.Dimensions = make(map[string]any, len(dims))
 		for k, v := range dims {
-			ev.Dimensions[k] = v
+			ev.Dimensions[k] = copyDimValue(v)
 		}
 	}
 
@@ -249,6 +251,36 @@ func (c *Client) QueueLen() int {
 }
 
 // --- internal ---
+
+// copyDimValue returns a shallow copy of slice-typed dimension values so that
+// caller mutations after Track do not affect queued events. Scalar values
+// (string, int, float64, bool) are immutable and returned as-is.
+func copyDimValue(v any) any {
+	switch s := v.(type) {
+	case []string:
+		cp := make([]string, len(s))
+		copy(cp, s)
+		return cp
+	case []any:
+		cp := make([]any, len(s))
+		copy(cp, s)
+		return cp
+	case []int:
+		cp := make([]int, len(s))
+		copy(cp, s)
+		return cp
+	case []float64:
+		cp := make([]float64, len(s))
+		copy(cp, s)
+		return cp
+	case []bool:
+		cp := make([]bool, len(s))
+		copy(cp, s)
+		return cp
+	default:
+		return v
+	}
+}
 
 // drainLocked moves all queued events out and returns them. Must be called with mu held.
 func (c *Client) drainLocked() []event {

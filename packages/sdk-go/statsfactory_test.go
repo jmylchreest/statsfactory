@@ -577,6 +577,102 @@ func TestNilDimensionsOmitted(t *testing.T) {
 	}
 }
 
+func TestArrayDimensionValues(t *testing.T) {
+	srv, captured := mockServer(t)
+
+	c := New(Config{
+		ServerURL:     srv.URL,
+		AppKey:        "key",
+		FlushInterval: time.Hour,
+	})
+	defer c.Close()
+
+	c.Track("plugin_used", Dims{
+		"plugin.name":    "kitty",
+		"output.plugins": []string{"kitty", "waybar"},
+		"scores":         []any{1, 2, 3},
+		"mixed":          []any{"hello", 42, true},
+	})
+
+	c.Flush(context.Background())
+
+	reqs := getCaptured(captured)
+	dims := reqs[0].Body.Events[0].Dimensions
+
+	// Scalar dim preserved
+	if s, ok := dims["plugin.name"].(string); !ok || s != "kitty" {
+		t.Errorf("plugin.name = %v (%T), want kitty", dims["plugin.name"], dims["plugin.name"])
+	}
+
+	// Array dims round-trip through JSON as []interface{}
+	plugins, ok := dims["output.plugins"].([]interface{})
+	if !ok {
+		t.Fatalf("output.plugins = %v (%T), want []interface{}", dims["output.plugins"], dims["output.plugins"])
+	}
+	if len(plugins) != 2 {
+		t.Fatalf("output.plugins length = %d, want 2", len(plugins))
+	}
+	if plugins[0] != "kitty" || plugins[1] != "waybar" {
+		t.Errorf("output.plugins = %v, want [kitty waybar]", plugins)
+	}
+
+	scores, ok := dims["scores"].([]interface{})
+	if !ok {
+		t.Fatalf("scores = %v (%T), want []interface{}", dims["scores"], dims["scores"])
+	}
+	if len(scores) != 3 {
+		t.Fatalf("scores length = %d, want 3", len(scores))
+	}
+	// JSON numbers decode as float64
+	if scores[0] != float64(1) || scores[1] != float64(2) || scores[2] != float64(3) {
+		t.Errorf("scores = %v, want [1 2 3]", scores)
+	}
+
+	mixed, ok := dims["mixed"].([]interface{})
+	if !ok {
+		t.Fatalf("mixed = %v (%T), want []interface{}", dims["mixed"], dims["mixed"])
+	}
+	if len(mixed) != 3 {
+		t.Fatalf("mixed length = %d, want 3", len(mixed))
+	}
+	if mixed[0] != "hello" || mixed[1] != float64(42) || mixed[2] != true {
+		t.Errorf("mixed = %v, want [hello 42 true]", mixed)
+	}
+}
+
+func TestArrayDimensionsAreCopied(t *testing.T) {
+	srv, captured := mockServer(t)
+
+	c := New(Config{
+		ServerURL:     srv.URL,
+		AppKey:        "key",
+		FlushInterval: time.Hour,
+	})
+	defer c.Close()
+
+	tags := []string{"kitty", "waybar"}
+	dims := Dims{"tags": tags}
+	c.Track("test", dims)
+
+	// Mutate the original slice after Track — should not affect queued event.
+	tags[0] = "mutated"
+
+	c.Flush(context.Background())
+
+	reqs := getCaptured(captured)
+	ev := reqs[0].Body.Events[0]
+	arr, ok := ev.Dimensions["tags"].([]interface{})
+	if !ok {
+		t.Fatalf("tags = %v (%T), want []interface{}", ev.Dimensions["tags"], ev.Dimensions["tags"])
+	}
+	if arr[0] != "kitty" {
+		t.Errorf("tags[0] = %v, want kitty (slice was not deep-copied)", arr[0])
+	}
+	if arr[1] != "waybar" {
+		t.Errorf("tags[1] = %v, want waybar", arr[1])
+	}
+}
+
 func TestOnErrorCallback(t *testing.T) {
 	errSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500)

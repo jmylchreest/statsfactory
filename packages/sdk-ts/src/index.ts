@@ -12,7 +12,7 @@
  *   appKey: "sf_live_xxxx",
  * });
  *
- * sf.track("page_view", { "page.path": "/home" });
+ * sf.track("page_view", { "page.path": "/home", "output.plugins": ["kitty", "waybar"] });
  *
  * // Events flush automatically. On close:
  * sf.close();
@@ -25,8 +25,11 @@ export const VERSION = "0.1.0";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-/** Dimension values: string, number, or boolean. */
-export type Dims = Record<string, string | number | boolean>;
+/** Scalar dimension value. */
+export type DimScalar = string | number | boolean;
+
+/** Dimension values: string, number, boolean, or array of scalars. */
+export type Dims = Record<string, DimScalar | DimScalar[]>;
 
 /** SDK configuration. */
 export interface StatsFactoryConfig {

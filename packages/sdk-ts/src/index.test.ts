@@ -106,6 +106,32 @@ describe("StatsFactory", () => {
       expect(client.queueLength()).toBe(1);
       client.close();
     });
+
+    it("supports array dimension values", () => {
+      const { client } = createClient();
+      const dims: Dims = {
+        "output.plugins": ["kitty", "waybar"],
+        "tags": ["fast", "reliable"],
+      };
+      client.track("test_event", dims);
+      expect(client.queueLength()).toBe(1);
+      client.close();
+    });
+
+    it("supports mixed scalar and array dimensions", () => {
+      const { client } = createClient();
+      const dims: Dims = {
+        "plugin.name": "kitty",
+        "plugin.version": 2,
+        enabled: true,
+        "output.plugins": ["kitty", "waybar"],
+        "scores": [1, 2, 3],
+        "flags": [true, false],
+      };
+      client.track("test_event", dims);
+      expect(client.queueLength()).toBe(1);
+      client.close();
+    });
   });
 
   describe("trackWithOptions", () => {
@@ -432,6 +458,21 @@ describe("StatsFactory", () => {
         (e: Record<string, unknown>) => e.event_key,
       );
       expect(new Set(keys).size).toBe(3);
+    });
+
+    it("sends array dimensions in wire format", async () => {
+      const { client, mock } = createClient({ sessionId: "s" });
+      client.track("plugin_used", {
+        "plugin.name": "kitty",
+        "output.plugins": ["kitty", "waybar"],
+      });
+      await client.flush();
+
+      const event = mock.requests[0].body.events[0];
+      expect(event.dimensions).toEqual({
+        "plugin.name": "kitty",
+        "output.plugins": ["kitty", "waybar"],
+      });
     });
   });
 });
