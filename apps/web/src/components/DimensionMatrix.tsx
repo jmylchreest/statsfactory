@@ -302,7 +302,7 @@ export default function DimensionMatrix() {
         to: isoTo,
       };
       if (filters.length > 0) {
-        params.filter = filters.map((f) => `${f.key}:${f.value}`);
+        params.filter = filters.map((f) => `${f.key}:eq:${f.value}`);
       }
       const res = await queryApi<MatrixQueryResponse>("/v1/query/matrix", params);
       setMatrix(res.matrix);
