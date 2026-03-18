@@ -455,6 +455,7 @@ queryRouter.openapi(sessionTimelineRoute, async (c) => {
         id: e.id,
         event_name: e.eventName,
         timestamp: e.timestamp,
+        created_at: e.createdAt,
         dimensions: e.dimensions,
       })),
       meta: {

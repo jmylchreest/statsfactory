@@ -373,79 +373,101 @@ export default function SessionTimeline() {
                 )}
 
                 <div className="space-y-0">
-                  {timelineEvents.map((ev, idx) => {
-                    const isExpanded = expandedEventId === ev.id;
-                    const dimEntries = Object.entries(ev.dimensions);
-                    const isFirst = idx === 0;
-                    const timeDelta =
-                      idx > 0
-                        ? durationBetween(
-                            timelineEvents[idx - 1].timestamp,
-                            ev.timestamp,
-                          )
-                        : null;
+                  {(() => {
+                    // Pre-compute batch info: group events by created_at
+                    const batchCounters = new Map<string, { total: number; seen: number }>();
+                    for (const ev of timelineEvents) {
+                      const existing = batchCounters.get(ev.created_at);
+                      if (existing) {
+                        existing.total++;
+                      } else {
+                        batchCounters.set(ev.created_at, { total: 0, seen: 0 });
+                        batchCounters.get(ev.created_at)!.total = 1;
+                      }
+                    }
+                    // Only show batch labels when a batch has >1 event
+                    const batchInfo = (ev: typeof timelineEvents[number]) => {
+                      const b = batchCounters.get(ev.created_at)!;
+                      if (b.total <= 1) return null;
+                      b.seen++;
+                      return { index: b.seen, total: b.total };
+                    };
 
-                    return (
-                      <div key={ev.id}>
-                        {/* Time delta between events */}
-                        {timeDelta && timeDelta !== "0ms" && (
-                          <div className="flex items-center gap-2 py-1 ml-[18px]">
-                            <span className="text-xs text-gray-600 font-mono">
-                              +{timeDelta}
-                            </span>
-                          </div>
-                        )}
+                    return timelineEvents.map((ev, idx) => {
+                      const isExpanded = expandedEventId === ev.id;
+                      const dimEntries = Object.entries(ev.dimensions);
+                      const isFirst = idx === 0;
+                      const timeDelta =
+                        idx > 0
+                          ? durationBetween(
+                              timelineEvents[idx - 1].timestamp,
+                              ev.timestamp,
+                            )
+                          : null;
+                      const batch = batchInfo(ev);
 
-                        <button
-                          onClick={() =>
-                            setExpandedEventId(isExpanded ? null : ev.id)
-                          }
-                          className="w-full text-left flex items-start gap-3 py-1.5 relative group"
-                        >
-                          {/* Dot on timeline */}
-                          <div
-                            className={`relative z-10 mt-1 w-2.5 h-2.5 rounded-full shrink-0 ${
-                              isFirst
-                                ? "bg-blue-500 ring-2 ring-blue-500/30"
-                                : "bg-gray-600 group-hover:bg-gray-400"
-                            }`}
-                          />
+                      return (
+                        <div key={ev.id}>
+                          <button
+                            onClick={() =>
+                              setExpandedEventId(isExpanded ? null : ev.id)
+                            }
+                            className="w-full text-left flex items-start gap-3 py-1.5 relative group"
+                          >
+                            {/* Dot on timeline */}
+                            <div
+                              className={`relative z-10 mt-1 w-2.5 h-2.5 rounded-full shrink-0 ${
+                                isFirst
+                                  ? "bg-blue-500 ring-2 ring-blue-500/30"
+                                  : "bg-gray-600 group-hover:bg-gray-400"
+                              }`}
+                            />
 
-                          {/* Event details */}
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span
-                                className={`font-mono text-xs font-medium ${eventColor(ev.event_name)}`}
-                              >
-                                {ev.event_name}
-                              </span>
-                              <span className="text-xs text-gray-500 tabular-nums">
-                                {formatTimestamp(ev.timestamp)}
-                              </span>
-                              {dimEntries.length > 0 && (
-                                <span className="text-xs text-gray-600">
-                                  {dimEntries.length} dim
-                                  {dimEntries.length !== 1 ? "s" : ""}
+                            {/* Event details */}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className={`font-mono text-xs font-medium ${eventColor(ev.event_name)}`}
+                                >
+                                  {ev.event_name}
                                 </span>
-                              )}
-                              <svg
-                                className={`w-3 h-3 text-gray-600 transition-transform ml-auto ${
-                                  isExpanded ? "rotate-180" : ""
-                                }`}
-                                fill="none"
-                                viewBox="0 0 24 24"
-                                stroke="currentColor"
-                              >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth={2}
-                                  d="M19 9l-7 7-7-7"
-                                />
-                              </svg>
+                                <span className="text-xs text-gray-500 tabular-nums">
+                                  {formatTimestamp(ev.timestamp)}
+                                </span>
+                                {dimEntries.length > 0 && (
+                                  <span className="text-xs text-gray-600">
+                                    {dimEntries.length} dim
+                                    {dimEntries.length !== 1 ? "s" : ""}
+                                  </span>
+                                )}
+                                {timeDelta !== null && (
+                                  <span className="text-xs text-gray-600 font-mono tabular-nums">
+                                    +{timeDelta}
+                                  </span>
+                                )}
+                                {batch && (
+                                  <span className="text-xs text-gray-600 font-mono tabular-nums">
+                                    {batch.index}/{batch.total}
+                                  </span>
+                                )}
+                                <svg
+                                  className={`w-3 h-3 text-gray-600 transition-transform ml-auto ${
+                                    isExpanded ? "rotate-180" : ""
+                                  }`}
+                                  fill="none"
+                                  viewBox="0 0 24 24"
+                                  stroke="currentColor"
+                                >
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    strokeWidth={2}
+                                    d="M19 9l-7 7-7-7"
+                                  />
+                                </svg>
+                              </div>
                             </div>
-                          </div>
-                        </button>
+                          </button>
 
                         {/* Expanded dimensions */}
                         {isExpanded && dimEntries.length > 0 && (
@@ -467,7 +489,8 @@ export default function SessionTimeline() {
                         )}
                       </div>
                     );
-                  })}
+                  });
+                  })()}
                 </div>
               </div>
             </div>

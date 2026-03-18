@@ -94,6 +94,7 @@ export interface SessionTimelineEvent {
   id: string;
   event_name: string;
   timestamp: string;
+  created_at: string;
   dimensions: Record<string, string>;
 }
 

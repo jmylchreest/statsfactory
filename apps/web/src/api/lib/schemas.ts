@@ -494,6 +494,7 @@ export const SessionTimelineResponseSchema = z
         id: z.string(),
         event_name: z.string(),
         timestamp: z.string(),
+        created_at: z.string(),
         dimensions: z.record(z.string(), z.string()),
       }),
     ),

@@ -549,6 +549,7 @@ export type SessionEvent = {
   id: string;
   eventName: string;
   timestamp: string;
+  createdAt: string;
   dimensions: Record<string, string>;
 };
 
@@ -566,6 +567,7 @@ export async function querySessionTimeline(
       id: events.id,
       eventName: events.eventName,
       timestamp: events.timestamp,
+      createdAt: events.createdAt,
     })
     .from(events)
     .where(
@@ -603,6 +605,7 @@ export async function querySessionTimeline(
     id: r.id,
     eventName: r.eventName,
     timestamp: r.timestamp,
+    createdAt: r.createdAt ?? r.timestamp,
     dimensions: dimsByEvent.get(r.id) ?? {},
   }));
 }
