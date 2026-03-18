@@ -229,6 +229,9 @@ export default function DimensionMatrix() {
 
   const [error, setError] = useState<string | null>(null);
 
+  // Config panel collapsed state — auto-collapse when we have results
+  const [configOpen, setConfigOpen] = useState(true);
+
   const isoFrom = range.from + "T00:00:00Z";
   const isoTo = range.to + "T23:59:59Z";
 
@@ -428,11 +431,11 @@ export default function DimensionMatrix() {
   // ── Render ──────────────────────────────────────────────────────────────
 
   return (
-    <div className="space-y-6">
-      <AppSelector onAppSelected={(id) => setAppId(id)} />
-
-      {/* Controls row */}
+    <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-3">
+        <AppSelector onAppSelected={(id) => setAppId(id)} />
+
+        {/* Controls row */}
         <label className="text-sm text-gray-400">
           From
           <input
@@ -453,8 +456,41 @@ export default function DimensionMatrix() {
         </label>
       </div>
 
-      {/* Event selector chips */}
+      {/* Config toggle bar */}
       {eventNames.length > 0 && (
+        <button
+          onClick={() => setConfigOpen((o) => !o)}
+          className="w-full flex items-center gap-2 text-left px-3 py-2 rounded-lg border border-gray-800 bg-gray-900 hover:bg-gray-800/50 transition-colors"
+        >
+          <svg
+            className={`w-3.5 h-3.5 text-gray-500 transition-transform ${configOpen ? "rotate-90" : ""}`}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+          <span className="text-sm text-gray-400">
+            {selectedEvents.length > 0 && (
+              <span className="text-gray-300">{selectedEvents.join(", ")}</span>
+            )}
+            {selectedEvents.length === 0 && "Select events..."}
+            {selectedDims.length > 0 && (
+              <span className="text-gray-500 ml-2">
+                &times; {selectedDims.join(", ")}
+              </span>
+            )}
+            {filters.length > 0 && (
+              <span className="text-yellow-600 ml-2">
+                ({filters.length} filter{filters.length !== 1 ? "s" : ""})
+              </span>
+            )}
+          </span>
+        </button>
+      )}
+
+      {/* Event selector chips */}
+      {eventNames.length > 0 && configOpen && (
         <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">
           <h2 className="text-sm font-medium text-gray-300 mb-2">
             Select event{eventNames.length > 1 ? "s" : ""} to analyse
@@ -522,9 +558,9 @@ export default function DimensionMatrix() {
       )}
 
       {selectedEvents.length > 0 && (
-        <div className="space-y-4">
+        <div className="space-y-3">
           {/* ── Dimension selector chips ──────────────────────────────── */}
-          <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">
+          {configOpen && <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">
             <div className="flex items-center justify-between mb-2">
               <h2 className="text-sm font-medium text-gray-300">
                 Select dimensions to cross-tabulate
@@ -671,10 +707,10 @@ export default function DimensionMatrix() {
                 </div>
               </div>
             )}
-          </div>
+          </div>}
 
           {/* ── Filters ──────────────────────────────────────────────── */}
-          <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">
+          {configOpen && <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">
             <h2 className="text-sm font-medium text-gray-300 mb-2">
               Filters
               <span className="ml-2 text-gray-600 font-normal text-xs">
@@ -751,7 +787,7 @@ export default function DimensionMatrix() {
                 )}
               </div>
             )}
-          </div>
+          </div>}
 
           {/* ── Matrix results ────────────────────────────────────────── */}
           {loadingMatrix && (

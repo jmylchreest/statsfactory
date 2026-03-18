@@ -422,33 +422,17 @@ export default function SessionTimeline() {
 
                             {/* Event details */}
                             <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-1.5">
                                 <span
-                                  className={`font-mono text-xs font-medium ${eventColor(ev.event_name)}`}
+                                  className={`font-mono text-xs font-medium truncate ${eventColor(ev.event_name)}`}
                                 >
                                   {ev.event_name}
                                 </span>
-                                <span className="text-xs text-gray-500 tabular-nums">
+                                <span className="text-[11px] text-gray-500 tabular-nums shrink-0">
                                   {formatTimestamp(ev.timestamp)}
                                 </span>
-                                {dimEntries.length > 0 && (
-                                  <span className="text-xs text-gray-600">
-                                    {dimEntries.length} dim
-                                    {dimEntries.length !== 1 ? "s" : ""}
-                                  </span>
-                                )}
-                                {timeDelta !== null && (
-                                  <span className="text-xs text-gray-600 font-mono tabular-nums">
-                                    +{timeDelta}
-                                  </span>
-                                )}
-                                {batch && (
-                                  <span className="text-xs text-gray-600 font-mono tabular-nums">
-                                    E{idx + 1}/{timelineEvents.length} B{batch.batchNum}/{batch.totalBatches}
-                                  </span>
-                                )}
                                 <svg
-                                  className={`w-3 h-3 text-gray-600 transition-transform ml-auto ${
+                                  className={`w-3 h-3 text-gray-600 transition-transform ml-auto shrink-0 ${
                                     isExpanded ? "rotate-180" : ""
                                   }`}
                                   fill="none"
@@ -463,6 +447,23 @@ export default function SessionTimeline() {
                                   />
                                 </svg>
                               </div>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                {dimEntries.length > 0 && (
+                                  <span className="text-[11px] text-gray-600">
+                                    {dimEntries.length} dim{dimEntries.length !== 1 ? "s" : ""}
+                                  </span>
+                                )}
+                                {timeDelta !== null && (
+                                  <span className="text-[11px] text-gray-600 font-mono tabular-nums">
+                                    +{timeDelta}
+                                  </span>
+                                )}
+                                {batch && (
+                                  <span className="text-[11px] text-gray-600 font-mono tabular-nums">
+                                    E{idx + 1}/{timelineEvents.length} B{batch.batchNum}/{batch.totalBatches}
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           </button>
 
@@ -470,9 +471,9 @@ export default function SessionTimeline() {
                         {isExpanded && dimEntries.length > 0 && (
                           <div className="ml-[22px] pl-3 pb-2 grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-1">
                             {dimEntries.map(([key, value]) => (
-                              <div key={key} className="text-xs">
+                              <div key={key} className="text-xs min-w-0 overflow-hidden">
                                 <span className="text-gray-500">{key}:</span>{" "}
-                                <span className="text-gray-300 font-mono">
+                                <span className="text-gray-300 font-mono truncate inline-block max-w-[200px] align-bottom" title={value}>
                                   {value}
                                 </span>
                               </div>
