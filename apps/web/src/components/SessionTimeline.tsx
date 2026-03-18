@@ -375,22 +375,19 @@ export default function SessionTimeline() {
                 <div className="space-y-0">
                   {(() => {
                     // Pre-compute batch info: group events by created_at
-                    const batchCounters = new Map<string, { total: number; seen: number }>();
+                    const batchMap = new Map<string, { batchNum: number; total: number; seen: number }>();
+                    let batchCount = 0;
                     for (const ev of timelineEvents) {
-                      const existing = batchCounters.get(ev.created_at);
-                      if (existing) {
-                        existing.total++;
-                      } else {
-                        batchCounters.set(ev.created_at, { total: 0, seen: 0 });
-                        batchCounters.get(ev.created_at)!.total = 1;
+                      if (!batchMap.has(ev.created_at)) {
+                        batchMap.set(ev.created_at, { batchNum: ++batchCount, total: 0, seen: 0 });
                       }
+                      batchMap.get(ev.created_at)!.total++;
                     }
-                    // Only show batch labels when a batch has >1 event
+                    const totalBatches = batchCount;
                     const batchInfo = (ev: typeof timelineEvents[number]) => {
-                      const b = batchCounters.get(ev.created_at)!;
-                      if (b.total <= 1) return null;
+                      const b = batchMap.get(ev.created_at)!;
                       b.seen++;
-                      return { index: b.seen, total: b.total };
+                      return { batchNum: b.batchNum, totalBatches, eventIndex: b.seen, eventTotal: b.total };
                     };
 
                     return timelineEvents.map((ev, idx) => {
@@ -447,7 +444,7 @@ export default function SessionTimeline() {
                                 )}
                                 {batch && (
                                   <span className="text-xs text-gray-600 font-mono tabular-nums">
-                                    {batch.index}/{batch.total}
+                                    B{batch.batchNum}/{batch.totalBatches} E{batch.eventIndex}/{batch.eventTotal}
                                   </span>
                                 )}
                                 <svg
