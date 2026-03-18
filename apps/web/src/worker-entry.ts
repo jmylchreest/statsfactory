@@ -4,9 +4,8 @@
  * Delegates HTTP fetch requests to the default Astro handler, and adds a
  * `scheduled` handler for the data retention cron trigger.
  *
- * The cron trigger is configured in wrangler.toml:
- *   [triggers]
- *   crons = ["0 3 * * *"]
+ * The cron trigger ("0 3 * * *") is configured via the Cloudflare SDK
+ * in scripts/deploy.ts for production, and in wrangler.dev.toml for local dev.
  */
 import { handle } from "@astrojs/cloudflare/handler";
 import { createDb } from "./db/client";

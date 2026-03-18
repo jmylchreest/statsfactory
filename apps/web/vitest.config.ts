@@ -2,6 +2,9 @@ import { defineConfig } from "vitest/config";
 import { resolve } from "node:path";
 
 export default defineConfig({
+  define: {
+    __STATSFACTORY_VERSION__: JSON.stringify("test"),
+  },
   resolve: {
     alias: {
       "@": resolve(__dirname, "src"),

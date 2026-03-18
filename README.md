@@ -13,58 +13,28 @@ no vendor lock-in.
   Comfortable for thousands of events per day across multiple projects.
 - **Privacy-first** -- no cookies, no fingerprinting, no PII stored. Events
   carry only the dimensions you explicitly send.
-- **Multi-dimension analytics** -- go beyond flat property breakdowns. Cross-
-  tabulate any combination of dimensions in one view (e.g. `plugin.name` x
-  `plugin.version` x `status`).
-- **Drop-in SDKs** -- lightweight clients for TypeScript/JavaScript (browser,
-  Node, Bun, Deno, Workers) and Go, or use plain HTTP POST.
-- **Automatic enrichment** -- geo (country, region, city) and device context
-  derived from Cloudflare request metadata at ingest time, at no extra cost.
+- **Multi-dimension analytics** -- cross-tabulate any combination of dimensions
+  in one view (e.g. `plugin.name` x `plugin.version` x `status`).
+- **Drop-in SDKs** -- lightweight clients for
+  [TypeScript/JavaScript](packages/sdk-ts/README.md) and
+  [Go](packages/sdk-go/README.md), or use plain HTTP POST.
 - **Self-hosted, your data** -- deploy to your own Cloudflare account in
   minutes. You own the data, full stop.
 
 ## Quick Start
 
-Prerequisites: [bun](https://bun.sh), [just](https://just.systems)
+Prerequisites: [bun](https://bun.sh), a Cloudflare account with a domain.
+See [docs/deploy.md](docs/deploy.md) for full prerequisites and details.
 
 ```bash
 git clone https://github.com/jmylchreest/statsfactory.git
 cd statsfactory
-just init
-just run
+./deploy.sh install
 ```
 
-This installs dependencies, applies the D1 schema to a local miniflare SQLite
-database, seeds a test app with an ingest key, builds, and starts `wrangler dev`
-at `http://localhost:8787`.
-
-The seed output prints your app key (`sf_live_...`). Use it to send test events:
-
-```bash
-curl -X POST http://localhost:8787/v1/events \
-  -H "Authorization: Bearer sf_live_YOUR_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "events": [{
-      "event": "page_view",
-      "dimensions": {
-        "page.path": "/home",
-        "theme": "dark"
-      }
-    }]
-  }'
-```
-
-## Sending Events
-
-### Using an SDK
-
-Official SDKs handle batching, background flushing, session IDs, and structured
-User-Agent headers automatically:
-
-- **TypeScript/JavaScript** (browser, Node, Bun, Deno, Workers):
-  [`@statsfactory/sdk`](packages/sdk-ts/README.md)
-- **Go**: [`statsfactory`](packages/sdk-go/README.md)
+The script handles everything interactively: D1 database, domain, Cloudflare
+Access, build, and deploy. Then create an app and key in the dashboard and
+start sending events:
 
 ```ts
 import { StatsFactory } from "@statsfactory/sdk";
@@ -83,73 +53,8 @@ sf.track("plugin_used", {
 });
 ```
 
-### Using plain HTTP
-
-No SDK required -- any HTTP client works. The full API is described by an
-**OpenAPI 3.1 spec** available at:
-
-```
-GET /v1/doc
-```
-
-For example: `https://stats.example.com/v1/doc` -- you can feed this to any
-OpenAPI-compatible tool (Swagger UI, code generators, Postman, etc.) to explore
-and interact with the API.
-
-#### Ingest endpoint
-
-```
-POST /v1/events
-Authorization: Bearer <app-key>
-Content-Type: application/json
-```
-
-**Request body:**
-
-```json
-{
-  "events": [
-    {
-      "event": "page_view",
-      "timestamp": "2026-03-14T10:30:00Z",
-      "session_id": "optional-session-id",
-      "distinct_id": "optional-user-id",
-      "dimensions": {
-        "page.path": "/home",
-        "theme": "dark",
-        "version": 2,
-        "beta": true
-      }
-    }
-  ]
-}
-```
-
-| Field | Type | Required | Notes |
-|-------|------|----------|-------|
-| `event` | string | Yes | Lowercase alphanumeric + underscores, max 64 chars. Must start with a letter. |
-| `event_key` | string | No | Client-generated unique key (e.g. ULID) for event correlation. When multiple items in the same batch share the same `event_key` and event name, their dimensions are merged into a single event. Max 64 chars. |
-| `timestamp` | string | No | ISO 8601. Defaults to server time if omitted. |
-| `session_id` | string | No | Client-provided session identifier. |
-| `distinct_id` | string | No | Client-provided user/install identifier. |
-| `dimensions` | object | No | Key-value map. Keys: lowercase `a-z0-9_.`, max 64 chars. Values: string (max 256 chars), number, or boolean. Max 25 user-provided dimensions per event. |
-
-Up to 25 events per request. Valid events are accepted even if others in the
-batch fail validation (partial acceptance).
-
-**Response:**
-
-```json
-{
-  "accepted": 1,
-  "errors": []
-}
-```
-
-Errors include an `index` field identifying which event failed and a `message`
-explaining why.
-
-#### Minimal curl example
+No SDK? The full API is described by an OpenAPI 3.1 spec at `GET /v1/doc` on
+your deployed instance, or use curl directly:
 
 ```bash
 curl -X POST https://stats.example.com/v1/events \
@@ -158,148 +63,45 @@ curl -X POST https://stats.example.com/v1/events \
   -d '{"events": [{"event": "app_started"}]}'
 ```
 
-#### User-Agent convention
+Other deploy commands:
 
-If you're building your own client, set a structured `User-Agent` header so the
-server can extract SDK/client enrichment dimensions automatically:
-
+```bash
+./deploy.sh upgrade              # Apply migrations, rebuild, redeploy
+./deploy.sh reconfigure-access   # Change who can access the dashboard
+./deploy.sh destroy              # Tear everything down
 ```
-statsfactory-sdk-<lang>/<sdk-version> (<client-name>/<client-version>; <os>; <arch>)
+
+## Local Development
+
+Prerequisites: [bun](https://bun.sh), [just](https://just.systems)
+
+```bash
+just init   # install deps, apply schema, seed test data
+just run    # start wrangler dev at http://localhost:8787
 ```
 
-For example: `statsfactory-sdk-go/0.1.0 (tinct/0.1.27; linux; amd64)`. This
-produces enrichment dimensions like `sdk.name`, `sdk.version`, `client.name`,
-`client.version`, `client.os`, and `client.arch`. Browser User-Agent strings
-are also parsed for `client.browser`, `client.os`, and `client.device_type`.
+The seed output prints a test app key (`sf_live_...`). Auth is bypassed
+automatically in local dev.
 
 ## Project Structure
 
 ```
-statsfactory/
-  apps/web/          Cloudflare Worker (Hono API + Astro dashboard)
-  packages/sdk-go/   Go SDK
-  packages/sdk-ts/   TypeScript SDK (browser, Node, Bun, Deno, Workers)
-  contrib/examples/  Example integrations
-  plan.md            Architecture and design document
+apps/web/          Cloudflare Worker (Hono API + Astro dashboard)
+packages/sdk-go/   Go SDK
+packages/sdk-ts/   TypeScript SDK (browser, Node, Bun, Deno, Workers)
+docs/              Deployment and operations docs
 ```
-
-See sub-READMEs for details:
-
-- [apps/web/](apps/web/README.md) -- Web app development and API reference
-- [packages/sdk-go/](packages/sdk-go/README.md) -- Go SDK usage
-- [packages/sdk-ts/](packages/sdk-ts/README.md) -- TypeScript SDK usage
-
-## Deploy
-
-### Prerequisites
-
-Before deploying, you'll need:
-
-**Cloudflare setup:**
-
-1. **Cloudflare account** -- [sign up free](https://dash.cloudflare.com/sign-up).
-2. **Domain on Cloudflare** -- a domain using Cloudflare nameservers. You can
-   [register a new domain](https://www.cloudflare.com/products/registrar/)
-   or [add an existing one](https://developers.cloudflare.com/fundamentals/setup/manage-domains/add-site/).
-3. **Zero Trust team** -- set up a [Cloudflare Zero Trust](https://one.dash.cloudflare.com/)
-   organization (free for up to 50 users). Under Settings > Authentication, add
-   at least one identity provider (Google, GitHub, one-time PIN, etc.).
-4. **Access Group** (recommended) -- controls who can access the dashboard.
-   In the [Zero Trust dashboard](https://one.dash.cloudflare.com/), go to
-   Access > Access Groups > Add a Group. Add an "Emails" include rule listing
-   the people who should have access (or "Emails ending in" for a whole domain).
-5. **API token** -- create a [Custom API Token](https://dash.cloudflare.com/profile/api-tokens)
-   (Create Custom Token) with these settings:
-   - **Permissions:**
-     - Account | D1 | Edit
-     - Account | Worker Scripts | Edit
-     - Account | Access: Organizations, Identity Providers, and Groups | Read
-     - Zone | Workers Routes | Edit
-     - Zone | DNS | Edit
-     - Zone | Access: Apps and Policies | Edit
-   - **Zone Resources:** Include | Specific zone | *your domain*
-   
-   Export it as `CLOUDFLARE_API_TOKEN` or paste it when prompted during install.
-
-**Local tooling:**
-
-- [bun](https://bun.sh) -- everything else is installed automatically
-
-### Deploy script
-
-```bash
-./deploy.sh install              # Create D1, configure domain + Access, build, deploy
-./deploy.sh upgrade              # Apply new migrations, rebuild, redeploy
-./deploy.sh reconfigure-access   # Change who can access the dashboard
-./deploy.sh destroy              # Tear down worker, D1 database, and Access config
-```
-
-The install script handles `bun install` and `wrangler login` automatically,
-then prompts for everything interactively. To skip prompts, set environment
-variables:
-
-```bash
-export CLOUDFLARE_API_TOKEN=xxxx
-export CF_ACCESS_TEAM_DOMAIN=myteam         # <team>.cloudflareaccess.com
-export STATSFACTORY_DOMAIN=stats.example.com
-./deploy.sh install
-```
-
-Deploy multiple independent instances with `--name`:
-
-```bash
-./deploy.sh install --name prod      # statsfactory-prod worker + D1
-./deploy.sh install --name staging   # statsfactory-staging worker + D1
-```
-
-See [docs/deploy.md](docs/deploy.md) for manual deployment steps and CI/CD setup.
-
-## Configuration
-
-All configuration is via environment variables. For local dev these live in
-`apps/web/.dev.vars` (created automatically by `just setup-env`).
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `DB` | Yes | Cloudflare D1 binding (set via `wrangler.toml`, not a secret) |
-| `CF_ACCESS_TEAM_DOMAIN` | Production | Cloudflare Access team domain. Required for production dashboard auth. |
-| `STATSFACTORY_DEV` | Dev only | Set to `1` to bypass dashboard auth in local development. |
-
-For production, set secrets as Cloudflare Worker secrets:
-
-```bash
-wrangler secret put CF_ACCESS_TEAM_DOMAIN
-```
-
-## Authentication
-
-Two separate auth mechanisms:
-
-- **Ingest** (`POST /v1/events`): Bearer token using an app key (`sf_live_...`).
-  App keys are public, embedded in client SDKs, and map events to apps.
-- **Dashboard & Query API**: Cloudflare Access (Zero Trust). In local dev this
-  is bypassed automatically when `STATSFACTORY_DEV=1`.
 
 ## FAQ
 
 **How is this different from Aptabase / PostHog / Plausible?**
-Aptabase has a flat property model with single-dimension breakdowns.
-PostHog and Plausible are full-featured but require hosting infrastructure or
-paid plans. statsfactory is purpose-built for the open-source use case: deploy
-once for free, send events with typed dimension maps, and cross-tabulate any
-combination of those dimensions (e.g., `plugin.name` x `plugin.version` x
-`plugin.status`).
+Purpose-built for the open-source use case: deploy once for free, send events
+with typed dimension maps, and cross-tabulate any combination of dimensions.
 
 **What does "free" actually mean?**
-Cloudflare Workers free tier gives you 100K requests/day and D1 gives you 5GB
-storage with 5M reads/day and 100K writes/day. That's enough for thousands of
-telemetry events per day across multiple open-source projects -- more than most
-OSS maintainers will ever need. If you outgrow it, the Workers paid plan
-($5/month) removes all daily caps.
-
-**Do I need Cloudflare Access for local development?**
-No. When `STATSFACTORY_DEV=1` is set in `.dev.vars`, dashboard auth is bypassed
-with a `dev@localhost` identity.
+Cloudflare Workers free tier: 100K requests/day. D1 free tier: 5GB storage,
+5M reads/day, 100K writes/day. Enough for thousands of telemetry events per
+day. The Workers paid plan ($5/month) removes all daily caps.
 
 ## License
 

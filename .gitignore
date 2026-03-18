@@ -11,4 +11,5 @@ local.db*
 test-integration-*.db
 contrib/examples/go/go
 wrangler-deploy*.toml
+apps/web/wrangler.toml
 *.toml.clean

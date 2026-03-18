@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 # statsfactory deploy script — thin wrapper around scripts/deploy.ts
+#
+# Uses the Cloudflare TypeScript SDK directly — no wrangler needed for deploy.
+# Wrangler is only used at build time (bunx astro build) if dist/ is not pre-built.
+#
 # Usage: ./deploy.sh install | upgrade | reconfigure-access | destroy
 set -euo pipefail
 
@@ -12,15 +16,6 @@ command -v bun >/dev/null 2>&1 || die "bun is required. Install it: https://bun.
 if [ ! -d node_modules ] || [ ! -d apps/web/node_modules ]; then
   echo "==> Installing dependencies..."
   bun install
-fi
-
-# Ensure wrangler is authenticated (needed for build/deploy)
-if ! bunx wrangler whoami >/dev/null 2>&1; then
-  echo ""
-  echo "Wrangler is not authenticated. Running 'wrangler login'..."
-  echo "This opens a browser window to authorise wrangler with Cloudflare."
-  echo ""
-  bunx wrangler login || die "wrangler login failed."
 fi
 
 # Delegate to the TypeScript deploy script

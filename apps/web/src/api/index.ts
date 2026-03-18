@@ -98,7 +98,7 @@ app.doc("/doc", {
   openapi: "3.1.0",
   info: {
     title: "StatsFactory API",
-    version: "1.0.0",
+    version: __STATSFACTORY_VERSION__,
     description:
       "Self-hosted, privacy-first analytics platform with multi-dimension querying.",
   },

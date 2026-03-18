@@ -87,85 +87,34 @@ All query and management endpoints require `app_id` as a query parameter.
 
 See [`.dev.vars.example`](.dev.vars.example) for documentation. Key variables:
 
-- `DB` -- D1 database binding (configured in `wrangler.toml`)
+- `DB` -- D1 database binding (configured in `wrangler.dev.toml` for local dev)
 - `STATSFACTORY_DEV` -- set to `1` for local dev (bypasses dashboard auth)
 - `CF_ACCESS_TEAM_DOMAIN` -- (production) enables Cloudflare Access auth
 
 ## Production Deployment
 
-### Prerequisites
-
-- A [Cloudflare](https://dash.cloudflare.com) account (free tier works)
-- [bun](https://bun.sh) and [wrangler](https://developers.cloudflare.com/workers/wrangler/) installed
-- (Optional) A custom domain pointed at Cloudflare
-
-### 1. Create the D1 database
+Use the deploy script -- it handles everything via the Cloudflare TypeScript SDK
+(no wrangler needed for production):
 
 ```bash
-wrangler d1 create statsfactory
+./deploy.sh install              # Create D1, configure domain + Access, build, deploy
+./deploy.sh upgrade              # Apply new migrations, rebuild, redeploy
+./deploy.sh destroy              # Tear down worker, D1 database, and Access config
 ```
 
-Copy the `database_id` from the output into `apps/web/wrangler.toml` (replacing `"local-dev"`).
+See [`docs/deploy.md`](../../docs/deploy.md) for full details, including
+prerequisites, API token setup, and CI/CD configuration.
 
-### 2. Apply the schema
+### Custom domain
 
-```bash
-cd apps/web && wrangler d1 migrations apply statsfactory --remote
-```
+The deploy script configures custom domains automatically via the Cloudflare SDK.
+Set `STATSFACTORY_DOMAIN` or enter it when prompted during `./deploy.sh install`.
 
-### 3. Set Cloudflare Worker secrets
-
-```bash
-wrangler secret put CF_ACCESS_TEAM_DOMAIN  # e.g. your-team.cloudflareaccess.com
-```
-
-### 4. Deploy
-
-```bash
-bun run build
-wrangler deploy
-```
-
-Wrangler will print the worker URL (e.g. `https://statsfactory.your-account.workers.dev`).
-
-### 5. Set up Cloudflare Access (Zero Trust)
-
-The dashboard and query API are protected by
-[Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/configure-apps/).
-This is free for up to 50 users.
-
-1. Go to **Cloudflare Zero Trust** dashboard > **Access** > **Applications**
-2. Click **Add an application** > **Self-hosted**
-3. Set the **Application domain** to your worker URL or custom domain
-4. Add an **Allow** policy (e.g. email ending in `@yourcompany.com`)
-5. Save -- Cloudflare Access now handles login, MFA, and session cookies
-
-The `CF_ACCESS_TEAM_DOMAIN` secret (e.g. `your-team.cloudflareaccess.com`) tells
-the auth middleware to validate the `Cf-Access-Authenticated-User-Email` header
-that Access sets automatically on every request.
-
-### 6. Create your first app and key
-
-```bash
-# Create an app
-curl -X POST https://your-worker.workers.dev/v1/apps \
-  -H "Content-Type: application/json" \
-  -d '{"name": "My App"}'
-# -> {"id":"01J1ABCDE...","name":"My App"}
-
-# Create an ingest key
-curl -X POST https://your-worker.workers.dev/v1/apps/01J1ABCDE.../keys \
-  -H "Content-Type: application/json" \
-  -d '{"name": "Production Key"}'
-# -> {"id":"...","key":"sf_live_xxx","key_prefix":"sf_live_","name":"Production Key","note":"..."}
-```
-
-Or use the **Manage Apps** page in the dashboard to create apps and keys via the UI.
-
-### 7. Data retention cron
+### Data retention cron
 
 A Cloudflare Cron Trigger runs daily at 03:00 UTC to delete events older than
-each app's configured `retention_days`. This is configured in `wrangler.toml`:
+each app's configured `retention_days`. The deploy script sets this up
+automatically. For local dev, it's configured in `wrangler.dev.toml`:
 
 ```toml
 [triggers]
@@ -173,23 +122,6 @@ crons = ["0 3 * * *"]
 ```
 
 To test locally: `wrangler dev --test-scheduled`, then `curl http://localhost:8787/__scheduled`.
-
-You can also trigger retention manually via the API:
-
-```bash
-curl -X POST https://your-worker.workers.dev/v1/cron/retention
-```
-
-### Custom domain
-
-Add a custom domain via **Cloudflare Workers** > **Settings** > **Triggers** >
-**Custom Domains**, or use a `routes` block in `wrangler.toml`:
-
-```toml
-routes = [
-  { pattern = "analytics.example.com/*", zone_name = "example.com" }
-]
-```
 
 ### Cost estimate (free tier)
 

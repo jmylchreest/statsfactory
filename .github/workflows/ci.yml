@@ -6,12 +6,110 @@ on:
     tags: ["v*"]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # Determine version and whether to skip (commit already tagged for release)
+  # ---------------------------------------------------------------------------
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      version_tag: ${{ steps.version.outputs.version_tag }}
+      is_release: ${{ steps.version.outputs.is_release }}
+      is_prerelease: ${{ steps.version.outputs.is_prerelease }}
+      should_skip: ${{ steps.version.outputs.should_skip }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version
+        id: version
+        run: |
+          SHOULD_SKIP=false
+          IS_PRERELEASE=false
+
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            # Tag push — stable release or pre-release
+            VERSION="${GITHUB_REF_NAME#v}"
+            VERSION_TAG="${GITHUB_REF_NAME}"
+
+            # Pre-release if version contains a pre-release suffix
+            # e.g. v0.1.0-alpha.1, v0.1.0-rc.1, v0.1.0-beta
+            if [[ "$VERSION" =~ -[a-zA-Z] ]]; then
+              IS_RELEASE=false
+              IS_PRERELEASE=true
+            else
+              IS_RELEASE=true
+              IS_PRERELEASE=false
+            fi
+
+          else
+            IS_RELEASE=false
+
+            # On main: skip if this commit already carries a stable release tag
+            # (avoids double-building when the release commit lands on main)
+            if [[ "${{ github.ref }}" == refs/heads/main ]]; then
+              EXISTING_TAG=$(git tag --points-at HEAD | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)
+              if [[ -n "$EXISTING_TAG" ]]; then
+                echo "Commit already has release tag ${EXISTING_TAG} — skipping snapshot build"
+                SHOULD_SKIP=true
+              fi
+            fi
+
+            # Snapshot version derived from git history:
+            #   version     = {major}.{minor}.{next_patch}-dev.{commits}+{hash}
+            #   version_tag = v{major}.{minor}.{next_patch}-dev.{commits}
+            #
+            # The '+hash' suffix is valid semver build metadata and used in
+            # artifact names, but omitted from the git tag because GitHub does
+            # not allow '+' in tag names.
+            if git describe --tags --always --long 2>/dev/null | grep -q '^v'; then
+              DESCRIBE=$(git describe --tags --always --long 2>/dev/null)
+              if [[ $DESCRIBE =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)-([0-9]+)-g([a-f0-9]+)$ ]]; then
+                MAJOR=${BASH_REMATCH[1]}
+                MINOR=${BASH_REMATCH[2]}
+                PATCH=${BASH_REMATCH[3]}
+                COMMITS=${BASH_REMATCH[4]}
+                HASH=${BASH_REMATCH[5]}
+                NEXT_PATCH=$((PATCH + 1))
+                VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}-dev.${COMMITS}+${HASH}"
+                VERSION_TAG="v${MAJOR}.${MINOR}.${NEXT_PATCH}-dev.${COMMITS}"
+              else
+                VERSION="0.0.0-dev.0+${GITHUB_SHA:0:7}"
+                VERSION_TAG="v0.0.0-dev.0"
+              fi
+            else
+              VERSION="0.0.0-dev.0+${GITHUB_SHA:0:7}"
+              VERSION_TAG="v0.0.0-dev.0"
+            fi
+          fi
+
+          echo "should_skip=${SHOULD_SKIP}"     >> "$GITHUB_OUTPUT"
+          echo "is_release=${IS_RELEASE}"       >> "$GITHUB_OUTPUT"
+          echo "is_prerelease=${IS_PRERELEASE}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}"             >> "$GITHUB_OUTPUT"
+          echo "version_tag=${VERSION_TAG}"     >> "$GITHUB_OUTPUT"
+
+          echo "Version:       ${VERSION}"
+          echo "Version tag:   ${VERSION_TAG}"
+          echo "Is release:    ${IS_RELEASE}"
+          echo "Is prerelease: ${IS_PRERELEASE}"
+          echo "Should skip:   ${SHOULD_SKIP}"
+
+  # ---------------------------------------------------------------------------
+  # Build
+  # ---------------------------------------------------------------------------
   build:
+    needs: [prepare]
+    if: needs.prepare.outputs.should_skip != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,6 +123,8 @@ jobs:
 
       - name: Build
         run: cd apps/web && bun run build
+        env:
+          STATSFACTORY_VERSION: ${{ needs.prepare.outputs.version }}
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -33,11 +133,18 @@ jobs:
           path: |
             apps/web/dist/
             apps/web/migrations/
-            apps/web/wrangler.toml
+            scripts/deploy.ts
             deploy.sh
+            package.json
+            bun.lockb
           retention-days: 7
 
+  # # ---------------------------------------------------------------------------
+  # # Test
+  # # ---------------------------------------------------------------------------
   # test:
+  #   needs: [prepare]
+  #   if: needs.prepare.outputs.should_skip != 'true'
   #   runs-on: ubuntu-latest
   #   steps:
   #     - uses: actions/checkout@v4
@@ -47,13 +154,18 @@ jobs:
   #     - run: bun install --frozen-lockfile
   #     - run: cd apps/web && bun run test
 
-  release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build]
+  # ---------------------------------------------------------------------------
+  # Snapshot — rolling pre-release on every main push
+  # ---------------------------------------------------------------------------
+  snapshot:
+    if: >-
+      needs.prepare.outputs.should_skip != 'true'
+      && needs.prepare.outputs.is_release != 'true'
+      && needs.prepare.outputs.is_prerelease != 'true'
+      && github.ref == 'refs/heads/main'
+    needs: [prepare, build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
       - uses: actions/download-artifact@v4
         with:
           name: build
@@ -61,17 +173,84 @@ jobs:
 
       - name: Package release bundle
         run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
           cd release-staging
           chmod +x deploy.sh
-          tar -czf ../statsfactory-${{ github.ref_name }}.tar.gz .
+          tar -czf "../statsfactory-${VERSION}.tar.gz" .
+          zip -r "../statsfactory-${VERSION}.zip" .
           cd ..
-          # Also create a zip for Windows users
-          cd release-staging && zip -r ../statsfactory-${{ github.ref_name }}.zip . && cd ..
+
+      - name: Update snapshot tag
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = 'snapshot';
+            const sha = context.sha;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const ref = `tags/${tag}`;
+            try {
+              await github.rest.git.updateRef({ owner, repo, ref, sha, force: true });
+            } catch {
+              await github.rest.git.createRef({ owner, repo, ref: `refs/${ref}`, sha });
+            }
+
+      - name: Create/update snapshot release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: snapshot
+          name: "Snapshot (${{ needs.prepare.outputs.version }})"
+          prerelease: true
+          generate_release_notes: false
+          body: |
+            Rolling snapshot build from `main`.
+
+            **Version:** `${{ needs.prepare.outputs.version }}`
+            **Commit:** ${{ github.sha }}
+
+            This pre-release is automatically updated on every push to `main`.
+            For stable releases, see the latest tagged release.
+
+            ### Install from snapshot
+
+            ```bash
+            curl -fsSL https://github.com/jmylchreest/statsfactory/releases/download/snapshot/statsfactory-${{ needs.prepare.outputs.version }}.tar.gz | tar xz
+            ./deploy.sh install --name prod
+            ```
+          files: |
+            statsfactory-${{ needs.prepare.outputs.version }}.tar.gz
+            statsfactory-${{ needs.prepare.outputs.version }}.zip
+
+  # ---------------------------------------------------------------------------
+  # Release — stable or pre-release on tag push
+  # ---------------------------------------------------------------------------
+  release:
+    if: >-
+      needs.prepare.outputs.is_release == 'true'
+      || needs.prepare.outputs.is_prerelease == 'true'
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: build
+          path: release-staging/
+
+      - name: Package release bundle
+        run: |
+          VERSION_TAG="${{ needs.prepare.outputs.version_tag }}"
+          cd release-staging
+          chmod +x deploy.sh
+          tar -czf "../statsfactory-${VERSION_TAG}.tar.gz" .
+          zip -r "../statsfactory-${VERSION_TAG}.zip" .
+          cd ..
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.prepare.outputs.version_tag }}
+          prerelease: ${{ needs.prepare.outputs.is_prerelease == 'true' }}
           generate_release_notes: true
           files: |
-            statsfactory-${{ github.ref_name }}.tar.gz
-            statsfactory-${{ github.ref_name }}.zip
+            statsfactory-${{ needs.prepare.outputs.version_tag }}.tar.gz
+            statsfactory-${{ needs.prepare.outputs.version_tag }}.zip

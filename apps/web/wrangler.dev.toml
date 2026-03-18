@@ -1,7 +1,8 @@
 # Local development config with D1.
 # Usage: just run  (or: bun run dev:d1)
 #
-# This is a superset of wrangler.toml with a local D1 binding enabled.
+# This is the sole wrangler config — used only for local dev via `wrangler dev`.
+# Production deploys use scripts/deploy.ts with the Cloudflare SDK (no wrangler).
 # wrangler dev creates a local SQLite file at .wrangler/state/v3/d1/.
 # The database_id is a placeholder — only used to namespace the local file.
 #

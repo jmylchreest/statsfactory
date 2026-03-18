@@ -38,13 +38,15 @@
 ## Quick start (deploy script)
 
 The fastest way to deploy. Only requires `bun` installed -- the script handles
-`bun install` and `wrangler login` automatically.
+`bun install` automatically. Deploys use the Cloudflare TypeScript SDK directly
+(no wrangler needed at deploy time).
 
 ```bash
 ./deploy.sh install              # Create D1, configure domain + Access, build, deploy
 ./deploy.sh upgrade              # Apply new migrations, rebuild, redeploy
 ./deploy.sh reconfigure-access   # Change the Access policy without rebuild/redeploy
 ./deploy.sh destroy              # Tear down worker, D1 database, and Access config
+./deploy.sh logs                 # Stream real-time worker logs (Ctrl-C to stop)
 ```
 
 The install script prompts for everything interactively, or set environment
@@ -77,57 +79,18 @@ Without `--name` the default name is `statsfactory` (no suffix).
 
 ## Manual deploy
 
-### Prerequisites
+The deploy script (`scripts/deploy.ts`) is the only supported deploy method. It
+uses the Cloudflare TypeScript SDK for all operations -- no wrangler needed.
 
-Same as above, plus [wrangler](https://developers.cloudflare.com/workers/wrangler/)
-authenticated (`wrangler login`).
-
-### 1. Create the D1 database
+If you need to do things manually (e.g. creating a D1 database for testing),
+you can use [wrangler](https://developers.cloudflare.com/workers/wrangler/):
 
 ```bash
 wrangler d1 create statsfactory
+wrangler d1 migrations apply statsfactory --remote
 ```
 
-Copy the `database_id` from the output into `apps/web/wrangler.toml`:
-
-```toml
-[[d1_databases]]
-binding = "DB"
-database_name = "statsfactory"
-database_id = "<paste-id>"
-```
-
-Apply the schema:
-
-```bash
-cd apps/web && wrangler d1 migrations apply statsfactory --remote
-```
-
-### 2. Set secrets and deploy
-
-```bash
-wrangler secret put CF_ACCESS_TEAM_DOMAIN  # your-team (from your-team.cloudflareaccess.com)
-cd apps/web && bun run build && wrangler deploy
-```
-
-The `wrangler.toml` is already configured -- no other edits needed. Wrangler
-prints your worker URL: `https://statsfactory.<account>.workers.dev`.
-
-### 3. Custom domain
-
-Your domain must use Cloudflare nameservers. Then:
-
-**Dashboard:** Workers & Pages > statsfactory > Settings > Domains & Routes > Add > Custom Domain
-
-**Or wrangler.toml:**
-
-```toml
-routes = [
-  { pattern = "stats.example.com/*", zone_name = "example.com" }
-]
-```
-
-Cloudflare provisions DNS and TLS automatically.
+However, the deploy script handles all of this automatically.
 
 ### 4. Cloudflare Access (Zero Trust)
 
@@ -176,19 +139,21 @@ Two workflows in `.github/workflows/`:
 - On tagged releases (`v*`), packages a release bundle (tarball + zip) and publishes to GitHub Releases
 
 **`deploy.yml`** -- auto-deploy on push to `main`:
-- Applies D1 migrations remotely
-- Deploys the worker
+- Applies D1 migrations via Cloudflare SDK
+- Builds and deploys the worker (no wrangler)
 
 Required repository secrets for `deploy.yml`:
 - `CLOUDFLARE_API_TOKEN` -- API token with Workers + D1 permissions
-- `CLOUDFLARE_ACCOUNT_ID` -- your Cloudflare account ID
 
-The `wrangler.toml` must have the real `database_id` committed for auto-deploy to work.
+Required repository variables for `deploy.yml`:
+- `STATSFACTORY_DOMAIN` -- custom domain (e.g. `stats.example.com`)
+- `STATSFACTORY_NAME` -- instance name (e.g. `prod`)
 
 ## Data retention
 
 A cron trigger runs daily at 03:00 UTC, deleting events older than each app's
-`retention_days` (default 90). Already configured in `wrangler.toml`:
+`retention_days` (default 90). The deploy script configures this automatically.
+For local dev, it's configured in `wrangler.dev.toml`:
 
 ```toml
 [triggers]

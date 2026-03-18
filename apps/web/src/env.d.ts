@@ -1,5 +1,8 @@
 /// <reference path="../.astro/types.d.ts" />
 
+/** Build-time version injected via Vite define in astro.config.mjs */
+declare const __STATSFACTORY_VERSION__: string;
+
 interface CloudflareEnv {
   DB: D1Database;
   ASSETS: Fetcher;
