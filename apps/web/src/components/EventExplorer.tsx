@@ -10,6 +10,15 @@ import {
 } from "recharts";
 import { queryApi, getSelectedAppId } from "./api-client";
 import AppSelector from "./AppSelector";
+import {
+  defaultRange,
+  toISORange,
+  extractError,
+  ErrorBanner,
+  LoadingText,
+  DateRangePicker,
+  CHART_TOOLTIP_PROPS,
+} from "./shared";
 import type {
   EventsQueryResponse,
   DimensionsQueryResponse,
@@ -18,19 +27,9 @@ import type {
   BreakdownRow,
 } from "./types";
 
-/** Default range: last 30 days. */
-function defaultRange(): { from: string; to: string } {
-  const now = new Date();
-  const to = now.toISOString().slice(0, 10);
-  const from = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .slice(0, 10);
-  return { from, to };
-}
-
 export default function EventExplorer() {
   const [appId, setAppId] = useState<string | null>(getSelectedAppId());
-  const [range, setRange] = useState(defaultRange);
+  const [range, setRange] = useState(() => defaultRange(30));
 
   // Step 1: event list
   const [eventNames, setEventNames] = useState<string[]>([]);
@@ -48,8 +47,7 @@ export default function EventExplorer() {
 
   const [error, setError] = useState<string | null>(null);
 
-  const isoFrom = range.from + "T00:00:00Z";
-  const isoTo = range.to + "T23:59:59Z";
+  const { isoFrom, isoTo } = toISORange(range);
 
   // Fetch event names (using the top events endpoint)
   const fetchEvents = useCallback(async () => {
@@ -70,7 +68,7 @@ export default function EventExplorer() {
         setSelectedEvent(names[0]);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
+      setError(extractError(err));
     } finally {
       setLoadingEvents(false);
     }
@@ -95,7 +93,7 @@ export default function EventExplorer() {
       setSelectedDim(null);
       setBreakdown([]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
+      setError(extractError(err));
     } finally {
       setLoadingDims(false);
     }
@@ -119,7 +117,7 @@ export default function EventExplorer() {
       );
       setBreakdown(res.breakdown);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
+      setError(extractError(err));
     } finally {
       setLoadingBreakdown(false);
     }
@@ -143,24 +141,7 @@ export default function EventExplorer() {
 
       {/* Controls */}
       <div className="flex flex-wrap items-center gap-3">
-        <label className="text-sm text-gray-400">
-          From
-          <input
-            type="date"
-            value={range.from}
-            onChange={(e) => setRange((r) => ({ ...r, from: e.target.value }))}
-            className="ml-2 rounded-md bg-gray-800 border border-gray-700 px-2 py-1 text-sm text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
-          />
-        </label>
-        <label className="text-sm text-gray-400">
-          To
-          <input
-            type="date"
-            value={range.to}
-            onChange={(e) => setRange((r) => ({ ...r, to: e.target.value }))}
-            className="ml-2 rounded-md bg-gray-800 border border-gray-700 px-2 py-1 text-sm text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
-          />
-        </label>
+        <DateRangePicker range={range} onChange={setRange} />
         {eventNames.length > 0 && (
           <select
             value={selectedEvent ?? ""}
@@ -176,15 +157,9 @@ export default function EventExplorer() {
         )}
       </div>
 
-      {error && (
-        <div className="rounded-lg border border-red-800/50 bg-red-900/20 px-4 py-3 text-sm text-red-300">
-          {error}
-        </div>
-      )}
+      {error && <ErrorBanner message={error} />}
 
-      {loadingEvents && (
-        <div className="text-sm text-gray-500">Loading events...</div>
-      )}
+      {loadingEvents && <LoadingText label="Loading events..." />}
 
       {!loadingEvents && eventNames.length === 0 && appId && (
         <div className="rounded-lg border border-gray-800 bg-gray-900 p-6 text-center text-sm text-gray-500">
@@ -281,17 +256,7 @@ export default function EventExplorer() {
                       axisLine={false}
                       width={140}
                     />
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: "#1F2937",
-                        border: "1px solid #374151",
-                        borderRadius: "0.375rem",
-                        fontSize: "0.75rem",
-                      }}
-                      labelStyle={{ color: "#D1D5DB" }}
-                      itemStyle={{ color: "#60A5FA" }}
-                      cursor={{ fill: "rgba(55, 65, 81, 0.3)" }}
-                    />
+                    <Tooltip {...CHART_TOOLTIP_PROPS} />
                     <Bar dataKey="count" fill="#3B82F6" radius={[0, 2, 2, 0]} />
                   </BarChart>
                 </ResponsiveContainer>

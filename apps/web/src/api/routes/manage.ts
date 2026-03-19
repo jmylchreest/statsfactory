@@ -71,7 +71,6 @@ manageRouter.openapi(createAppRoute, async (c) => {
   await db.insert(apps).values({
     id,
     name: body.name,
-    geoPrecision: body.geo_precision ?? "country",
     retentionDays: body.retention_days ?? 90,
     enabledDims: JSON.stringify(body.enabled_dims ?? DEFAULT_ENABLED_DIMS),
     createdAt: now,
@@ -226,7 +225,7 @@ const updateAppRoute = createRoute({
   tags: ["Management"],
   summary: "Update an app",
   description:
-    "Update app settings (name, geo precision, retention, enabled dims). Protected by Cloudflare Access.",
+    "Update app settings (name, retention, enabled dims). Protected by Cloudflare Access.",
   security: [{ CfAccess: [] }],
   request: {
     params: AppIdParamSchema,
@@ -262,9 +261,8 @@ manageRouter.openapi(updateAppRoute, async (c) => {
   }
 
   // Build update object from provided fields only
-  const updates: Partial<{ name: string; geoPrecision: string; retentionDays: number; enabledDims: string }> = {};
+  const updates: Partial<{ name: string; retentionDays: number; enabledDims: string }> = {};
   if (body.name !== undefined) updates.name = body.name;
-  if (body.geo_precision !== undefined) updates.geoPrecision = body.geo_precision;
   if (body.retention_days !== undefined) updates.retentionDays = body.retention_days;
   if (body.enabled_dims !== undefined) updates.enabledDims = JSON.stringify(body.enabled_dims);
 
@@ -282,7 +280,6 @@ manageRouter.openapi(updateAppRoute, async (c) => {
   return c.json({
     id: updated.id,
     name: updated.name,
-    geoPrecision: updated.geoPrecision,
     retentionDays: updated.retentionDays,
     enabledDims: parseEnabledDims(updated.enabledDims),
   });

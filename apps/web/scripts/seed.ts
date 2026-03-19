@@ -50,8 +50,8 @@ if (existing) {
 // Create the app
 const appId = ulid();
 db.prepare(
-  "INSERT INTO apps (id, name, geo_precision, retention_days, created_at) VALUES (?, ?, ?, ?, ?)"
-).run(appId, appName, "country", 90, now);
+  "INSERT INTO apps (id, name, retention_days, created_at) VALUES (?, ?, ?, ?)"
+).run(appId, appName, 90, now);
 
 // Create an ingest API key
 const { rawKey: ingestKey, keyHash: ingestHash, keyPrefix: ingestPrefix } =

@@ -13,39 +13,25 @@ describe("extractGeoDimensions", () => {
   };
 
   it("returns empty for undefined cf", () => {
-    expect(extractGeoDimensions(undefined, "country")).toEqual({});
+    expect(extractGeoDimensions(undefined)).toEqual({});
   });
 
-  it("returns empty for precision 'none'", () => {
-    expect(extractGeoDimensions(fullCf, "none")).toEqual({});
-  });
-
-  it("returns country-level dims for precision 'country'", () => {
-    const dims = extractGeoDimensions(fullCf, "country");
+  it("extracts all geo dimensions", () => {
+    const dims = extractGeoDimensions(fullCf);
     expect(dims["geo.country"]).toBe("NZ");
     expect(dims["geo.continent"]).toBe("OC");
     expect(dims["geo.timezone"]).toBe("Pacific/Auckland");
-    // Should NOT include city-level
-    expect(dims["geo.city"]).toBeUndefined();
-    expect(dims["geo.region"]).toBeUndefined();
-    expect(dims["geo.latitude"]).toBeUndefined();
-    expect(dims["geo.longitude"]).toBeUndefined();
-  });
-
-  it("returns city-level dims for precision 'city'", () => {
-    const dims = extractGeoDimensions(fullCf, "city");
-    expect(dims["geo.country"]).toBe("NZ");
-    expect(dims["geo.continent"]).toBe("OC");
-    expect(dims["geo.city"]).toBe("Wellington");
     expect(dims["geo.region"]).toBe("WLG");
+    expect(dims["geo.city"]).toBe("Wellington");
     expect(dims["geo.latitude"]).toBe("-41.2865");
     expect(dims["geo.longitude"]).toBe("174.7762");
   });
 
   it("handles partial cf data gracefully", () => {
-    const dims = extractGeoDimensions({ country: "US" }, "country");
+    const dims = extractGeoDimensions({ country: "US" });
     expect(dims["geo.country"]).toBe("US");
     expect(dims["geo.continent"]).toBeUndefined();
+    expect(dims["geo.city"]).toBeUndefined();
   });
 });
 

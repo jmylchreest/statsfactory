@@ -514,10 +514,6 @@ export const CreateAppSchema = z
       description:
         "App name. Alphanumeric + spaces/hyphens/underscores, max 64 chars. Must start with a letter.",
     }),
-    geo_precision: z.enum(["country", "city", "none"]).optional().openapi({
-      example: "country",
-      description: 'Geolocation precision. Defaults to "country".',
-    }),
     retention_days: z
       .number()
       .int()
@@ -554,7 +550,6 @@ export const ListAppsResponseSchema = z
       z.object({
         id: z.string(),
         name: z.string(),
-        geoPrecision: z.string(),
         retentionDays: z.number(),
         enabledDims: z.array(z.string()),
         createdAt: z.string(),
@@ -634,10 +629,6 @@ export const UpdateAppSchema = z
       example: "My Updated App",
       description: "New app name.",
     }),
-    geo_precision: z.enum(["country", "city", "none"]).optional().openapi({
-      example: "city",
-      description: "Geolocation precision.",
-    }),
     retention_days: z
       .number()
       .int()
@@ -663,7 +654,6 @@ export const UpdateAppResponseSchema = z
   .object({
     id: z.string(),
     name: z.string(),
-    geoPrecision: z.string(),
     retentionDays: z.number(),
     enabledDims: z.array(z.string()),
   })

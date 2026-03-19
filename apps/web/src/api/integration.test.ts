@@ -54,7 +54,6 @@ beforeAll(async () => {
     `CREATE TABLE IF NOT EXISTS apps (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
-      geo_precision TEXT NOT NULL DEFAULT 'country',
       retention_days INTEGER NOT NULL DEFAULT 90,
       enabled_dims TEXT NOT NULL DEFAULT '[]',
       created_at TEXT NOT NULL
@@ -98,8 +97,8 @@ beforeAll(async () => {
   const now = new Date().toISOString();
 
   await d1.prepare(
-    "INSERT INTO apps (id, name, geo_precision, retention_days, created_at) VALUES (?, ?, ?, ?, ?)"
-  ).bind(testAppId, "Integration Test App", "country", 90, now).run();
+    "INSERT INTO apps (id, name, retention_days, created_at) VALUES (?, ?, ?, ?)"
+  ).bind(testAppId, "Integration Test App", 90, now).run();
 
   const { rawKey, keyHash, keyPrefix } = await generateApiKey("live");
   testApiKey = rawKey;

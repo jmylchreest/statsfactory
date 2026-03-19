@@ -5,18 +5,15 @@ import { parseUserAgent } from "../lib/ua-parser";
 import type { Database } from "../../db/client";
 import type { AppEnv } from "../index";
 
-type GeoPrecision = "country" | "city" | "none";
-
 /**
  * Complete list of all enriched dimension keys the system can produce.
  * Exported so the UI can show toggles for every dimension.
  */
 export const ALL_ENRICHED_DIMS: readonly string[] = [
-  // Geo (country precision)
+  // Geo
   "geo.country",
   "geo.continent",
   "geo.timezone",
-  // Geo (city precision — only extracted when geo_precision = "city")
   "geo.region",
   "geo.city",
   "geo.latitude",
@@ -69,7 +66,6 @@ export const DEFAULT_ENABLED_DIMS: readonly string[] = [
 const APP_CONFIG_TTL_MS = 60 * 60 * 1000; // 1 hour
 
 type AppConfig = {
-  geoPrecision: GeoPrecision;
   enabledDims: ReadonlySet<string>;
   expiresAt: number;
 };
@@ -77,8 +73,7 @@ type AppConfig = {
 const appConfigCache = new Map<string, AppConfig>();
 
 /**
- * Get app config from cache or DB. The query piggybacks on the existing
- * geo_precision lookup — no extra D1 round-trip.
+ * Get app config from cache or DB.
  */
 async function getAppConfig(
   db: Database,
@@ -88,7 +83,7 @@ async function getAppConfig(
   if (cached && Date.now() < cached.expiresAt) return cached;
 
   const [app] = await db
-    .select({ geoPrecision: apps.geoPrecision, enabledDims: apps.enabledDims })
+    .select({ enabledDims: apps.enabledDims })
     .from(apps)
     .where(eq(apps.id, appId))
     .limit(1);
@@ -106,7 +101,6 @@ async function getAppConfig(
   }
 
   const config: AppConfig = {
-    geoPrecision: (app?.geoPrecision as GeoPrecision) ?? "country",
     enabledDims: enabledSet,
     expiresAt: Date.now() + APP_CONFIG_TTL_MS,
   };
@@ -150,28 +144,24 @@ interface CfProperties {
 }
 
 /**
- * Extract geo dimensions from the CF request object based on app's geo precision.
+ * Extract all geo dimensions from the CF request object.
+ * The enabledDims filter (applied later) is the sole gate for which
+ * dims actually get stored.
  */
 export function extractGeoDimensions(
   cf: CfProperties | undefined,
-  precision: GeoPrecision,
 ): Record<string, string> {
-  if (!cf || precision === "none") return {};
+  if (!cf) return {};
 
   const dims: Record<string, string> = {};
 
-  // Country-level (always included if precision != "none")
   if (cf.country) dims["geo.country"] = String(cf.country);
   if (cf.continent) dims["geo.continent"] = String(cf.continent);
   if (cf.timezone) dims["geo.timezone"] = String(cf.timezone);
-
-  // City-level (only if precision is "city")
-  if (precision === "city") {
-    if (cf.region) dims["geo.region"] = String(cf.region);
-    if (cf.city) dims["geo.city"] = String(cf.city);
-    if (cf.latitude) dims["geo.latitude"] = String(cf.latitude);
-    if (cf.longitude) dims["geo.longitude"] = String(cf.longitude);
-  }
+  if (cf.region) dims["geo.region"] = String(cf.region);
+  if (cf.city) dims["geo.city"] = String(cf.city);
+  if (cf.latitude) dims["geo.latitude"] = String(cf.latitude);
+  if (cf.longitude) dims["geo.longitude"] = String(cf.longitude);
 
   return dims;
 }
@@ -211,7 +201,7 @@ export const enrichMiddleware = createMiddleware<AppEnv>(async (c, next) => {
   // Get CF request metadata (only available in production, not in dev)
   const cf = (c.req.raw as Request & { cf?: CfProperties }).cf;
 
-  const geoDims = extractGeoDimensions(cf, config.geoPrecision);
+  const geoDims = extractGeoDimensions(cf);
   const netDims = extractNetDimensions(cf);
   const uaDims = parseUserAgent(c.req.header("User-Agent") ?? null);
 

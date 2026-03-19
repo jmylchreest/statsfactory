@@ -1,5 +1,6 @@
 ---
 import "../styles/global.css";
+import maplibrePkg from "maplibre-gl/package.json";
 
 interface Props {
   title?: string;
@@ -9,6 +10,7 @@ interface Props {
 const { title = "statsfactory", activePage = "" } = Astro.props;
 
 const version = __STATSFACTORY_VERSION__;
+const maplibreVersion = maplibrePkg.version;
 
 const navItems = [
   {
@@ -51,6 +53,9 @@ const navItems = [
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>{title}</title>
+    <!-- MapLibre GL JS — loaded from jsDelivr CDN instead of bundling (~1MB saving) -->
+    <link rel="stylesheet" href={`https://cdn.jsdelivr.net/npm/maplibre-gl@${maplibreVersion}/dist/maplibre-gl.min.css`} />
+    <script is:inline src={`https://cdn.jsdelivr.net/npm/maplibre-gl@${maplibreVersion}/dist/maplibre-gl.js`}></script>
     <style>
       #sidebar { transition: width 150ms ease; overflow: hidden; }
       #sidebar.collapsed { width: 3rem; }

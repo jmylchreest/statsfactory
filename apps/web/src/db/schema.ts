@@ -5,11 +5,6 @@ import { sqliteTable, text, integer, primaryKey, index } from "drizzle-orm/sqlit
 export const apps = sqliteTable("apps", {
   id: text("id").primaryKey(), // ULID
   name: text("name").notNull(),
-  geoPrecision: text("geo_precision", {
-    enum: ["country", "city", "none"],
-  })
-    .notNull()
-    .default("country"),
   retentionDays: integer("retention_days").notNull().default(90),
   enabledDims: text("enabled_dims").notNull().default("[]"), // JSON array of enabled enriched dim keys
   createdAt: text("created_at").notNull(),

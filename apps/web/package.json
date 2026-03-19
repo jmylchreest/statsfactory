@@ -21,6 +21,7 @@
     "astro": "^6.0.0",
     "drizzle-orm": "^0.45.0",
     "hono": "^4.7.0",
+    "maplibre-gl": "^5.20.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "recharts": "^3.8.0",

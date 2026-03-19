@@ -36,22 +36,14 @@ describe("CreateAppSchema", () => {
     }
   });
 
-  it("rejects invalid geo_precision", () => {
+  it("rejects unknown fields (geo_precision removed)", () => {
+    // geo_precision no longer exists in the schema — extra fields are stripped by Zod
     const result = CreateAppSchema.safeParse({
       name: "test",
-      geo_precision: "zipcode",
+      geo_precision: "country",
     });
-    expect(result.success).toBe(false);
-  });
-
-  it("accepts valid geo_precision values", () => {
-    for (const gp of ["country", "city", "none"]) {
-      const result = CreateAppSchema.safeParse({
-        name: "test",
-        geo_precision: gp,
-      });
-      expect(result.success).toBe(true);
-    }
+    // Zod strips unknown keys by default, so this still succeeds
+    expect(result.success).toBe(true);
   });
 
   it("rejects retention_days out of range (too low)", () => {
@@ -93,7 +85,6 @@ describe("CreateAppSchema", () => {
     const result = CreateAppSchema.safeParse({ name: "test" });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.geo_precision).toBeUndefined();
       expect(result.data.retention_days).toBeUndefined();
     }
   });

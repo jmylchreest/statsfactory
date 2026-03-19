@@ -122,10 +122,10 @@ export async function mutateApi<T>(
 
 /** Fetch the list of apps from the management API. */
 export async function fetchApps(): Promise<
-  Array<{ id: string; name: string; geoPrecision: string; retentionDays: number; createdAt: string }>
+  Array<{ id: string; name: string; retentionDays: number; enabledDims: string[]; createdAt: string }>
 > {
   const res = await queryApi<{
-    apps: Array<{ id: string; name: string; geoPrecision: string; retentionDays: number; createdAt: string }>;
+    apps: Array<{ id: string; name: string; retentionDays: number; enabledDims: string[]; createdAt: string }>;
   }>("/v1/apps");
   return res.apps;
 }

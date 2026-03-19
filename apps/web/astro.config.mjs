@@ -55,9 +55,34 @@ export default defineConfig({
   },
   integrations: [react()],
   vite: {
-    plugins: [tailwindcss()],
+    plugins: [
+      tailwindcss(),
+      // Externalize maplibre-gl in the client build so it's loaded from
+      // the jsDelivr CDN <script> tag in Dashboard.astro instead of being
+      // bundled (~1MB saving). The UMD build exposes window.maplibregl.
+      {
+        name: "externalize-maplibre",
+        enforce: "pre",
+        resolveId(source) {
+          if (source === "maplibre-gl") {
+            return "\0maplibre-gl-cdn";
+          }
+        },
+        load(id) {
+          if (id === "\0maplibre-gl-cdn") {
+            // Return a thin shim that re-exports the CDN-provided global.
+            return "export default globalThis.maplibregl;";
+          }
+        },
+      },
+    ],
     define: {
       __STATSFACTORY_VERSION__: JSON.stringify(version),
+    },
+    ssr: {
+      // Prevent maplibre-gl from being bundled into the Worker.
+      // It's a client-only WebGL library that cannot run server-side.
+      external: ["maplibre-gl"],
     },
   },
 });

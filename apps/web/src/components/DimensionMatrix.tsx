@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
 import { queryApi, getSelectedAppId } from "./api-client";
 import AppSelector from "./AppSelector";
 import {
@@ -11,6 +11,16 @@ import {
   Treemap,
   Cell,
 } from "recharts";
+import { dimColorHex } from "./dim-color";
+import {
+  defaultRange,
+  toISORange,
+  extractError,
+  ErrorBanner,
+  LoadingText,
+  DateRangePicker,
+  CHART_TOOLTIP_PROPS,
+} from "./shared";
 import type {
   EventsQueryResponse,
   DimensionsQueryResponse,
@@ -20,16 +30,9 @@ import type {
   DimensionKey,
 } from "./types";
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
-
-function defaultRange(): { from: string; to: string } {
-  const now = new Date();
-  const to = now.toISOString().slice(0, 10);
-  const from = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .slice(0, 10);
-  return { from, to };
-}
+// Lazy-load the map component only in the browser (maplibre-gl is client-only WebGL).
+// Using a function body prevents Vite/Rollup from tracing the import during SSR.
+const DonutClusterMap = lazy(() => import("./DonutClusterMap"));
 
 type SortConfig = { column: string; direction: "asc" | "desc" };
 
@@ -192,11 +195,11 @@ function TreemapContent(props: {
 
 // ── Main component ──────────────────────────────────────────────────────────
 
-type ChartType = "bar" | "treemap";
+type ChartType = "bar" | "treemap" | "map";
 
 export default function DimensionMatrix() {
   const [appId, setAppId] = useState<string | null>(getSelectedAppId());
-  const [range, setRange] = useState(defaultRange);
+  const [range, setRange] = useState(() => defaultRange(30));
 
   // Step 1: event list
   const [eventNames, setEventNames] = useState<string[]>([]);
@@ -232,8 +235,7 @@ export default function DimensionMatrix() {
   // Config panel collapsed state — auto-collapse when we have results
   const [configOpen, setConfigOpen] = useState(true);
 
-  const isoFrom = range.from + "T00:00:00Z";
-  const isoTo = range.to + "T23:59:59Z";
+  const { isoFrom, isoTo } = toISORange(range);
 
   // ── Data fetching ───────────────────────────────────────────────────────
 
@@ -254,7 +256,7 @@ export default function DimensionMatrix() {
         setSelectedEvents([names[0]]);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
+      setError(extractError(err));
     } finally {
       setLoadingEvents(false);
     }
@@ -279,7 +281,7 @@ export default function DimensionMatrix() {
       setFilters([]);
       setMatrix([]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
+      setError(extractError(err));
     } finally {
       setLoadingDims(false);
     }
@@ -311,7 +313,7 @@ export default function DimensionMatrix() {
       setMatrix(res.matrix);
       setSort({ column: "count", direction: "desc" });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
+      setError(extractError(err));
     } finally {
       setLoadingMatrix(false);
     }
@@ -428,6 +430,28 @@ export default function DimensionMatrix() {
     count: Number(row.count),
   }));
 
+  // ── Geo map detection ──────────────────────────────────────────────────
+
+  const GEO_DIMS = ["geo.country", "geo.city", "geo.latitude", "geo.longitude"];
+  const selectedGeoDims = selectedDims.filter((d) => GEO_DIMS.includes(d));
+  const selectedNonGeoDims = selectedDims.filter((d) => !GEO_DIMS.includes(d));
+  const hasGeoDim = selectedGeoDims.length > 0;
+  const hasNonGeoDim = selectedNonGeoDims.length > 0;
+  const mapAvailable = hasGeoDim && hasNonGeoDim;
+
+  // Determine which geo dim to use for positioning and which non-geo for segments
+  const geoDimForMap = selectedGeoDims.includes("geo.latitude")
+    ? "geo.latitude"
+    : selectedGeoDims.includes("geo.city")
+      ? "geo.city"
+      : selectedGeoDims.includes("geo.country")
+        ? "geo.country"
+        : selectedGeoDims[0] ?? "";
+  const lngDimForMap = selectedGeoDims.includes("geo.longitude")
+    ? "geo.longitude"
+    : undefined;
+  const segmentDimForMap = selectedNonGeoDims[0] ?? "";
+
   // ── Render ──────────────────────────────────────────────────────────────
 
   return (
@@ -436,24 +460,7 @@ export default function DimensionMatrix() {
         <AppSelector onAppSelected={(id) => setAppId(id)} />
 
         {/* Controls row */}
-        <label className="text-sm text-gray-400">
-          From
-          <input
-            type="date"
-            value={range.from}
-            onChange={(e) => setRange((r) => ({ ...r, from: e.target.value }))}
-            className="ml-2 rounded-md bg-gray-800 border border-gray-700 px-2 py-1 text-sm text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
-          />
-        </label>
-        <label className="text-sm text-gray-400">
-          To
-          <input
-            type="date"
-            value={range.to}
-            onChange={(e) => setRange((r) => ({ ...r, to: e.target.value }))}
-            className="ml-2 rounded-md bg-gray-800 border border-gray-700 px-2 py-1 text-sm text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
-          />
-        </label>
+        <DateRangePicker range={range} onChange={setRange} />
       </div>
 
       {/* Config toggle bar */}
@@ -541,15 +548,9 @@ export default function DimensionMatrix() {
         </div>
       )}
 
-      {error && (
-        <div className="rounded-lg border border-red-800/50 bg-red-900/20 px-4 py-3 text-sm text-red-300">
-          {error}
-        </div>
-      )}
+      {error && <ErrorBanner message={error} />}
 
-      {loadingEvents && (
-        <div className="text-sm text-gray-500">Loading events...</div>
-      )}
+      {loadingEvents && <LoadingText label="Loading events..." />}
 
       {!loadingEvents && eventNames.length === 0 && appId && (
         <div className="rounded-lg border border-gray-800 bg-gray-900 p-6 text-center text-sm text-gray-500">
@@ -791,7 +792,7 @@ export default function DimensionMatrix() {
 
           {/* ── Matrix results ────────────────────────────────────────── */}
           {loadingMatrix && (
-            <div className="text-sm text-gray-500">Loading matrix...</div>
+            <LoadingText label="Loading matrix..." />
           )}
 
           {selectedDims.length >= minDims && !loadingMatrix && matrix.length === 0 && (() => {
@@ -837,6 +838,7 @@ export default function DimensionMatrix() {
                   {([
                     ["bar", "Bar chart"],
                     ["treemap", "Treemap"],
+                    ...(mapAvailable ? [["map", "Map"] as [ChartType, string]] : []),
                   ] as [ChartType, string][]).map(([type, label]) => (
                     <button
                       key={type}
@@ -867,12 +869,7 @@ export default function DimensionMatrix() {
                         axisLine={false}
                         tickLine={false}
                       />
-                      <Tooltip
-                        contentStyle={{ backgroundColor: "#1f2937", border: "1px solid #374151", borderRadius: 8, fontSize: 12 }}
-                        labelStyle={{ color: "#f3f4f6" }}
-                        itemStyle={{ color: "#9ca3af" }}
-                        cursor={{ fill: "rgba(55, 65, 81, 0.3)" }}
-                      />
+                      <Tooltip {...CHART_TOOLTIP_PROPS} />
                       <Bar dataKey="count" radius={[0, 4, 4, 0]}>
                         {chartData.map((_, i) => (
                           <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
@@ -896,6 +893,28 @@ export default function DimensionMatrix() {
                     />
                   </ResponsiveContainer>
                 </div>
+              )}
+
+              {/* ── Map ────────────────────────────────────────────────── */}
+              {chartType === "map" && mapAvailable && (
+                <Suspense
+                  fallback={
+                    <div
+                      style={{ height: 450 }}
+                      className="flex items-center justify-center rounded-lg bg-gray-800/50"
+                    >
+                      <span className="text-sm text-gray-500">Loading map...</span>
+                    </div>
+                  }
+                >
+                  <DonutClusterMap
+                    matrixData={sortedMatrix}
+                    geoDim={geoDimForMap}
+                    segmentDim={segmentDimForMap}
+                    lngDim={lngDimForMap}
+                    height={450}
+                  />
+                </Suspense>
               )}
 
               {/* ── Table ──────────────────────────────────────────────── */}
@@ -926,20 +945,36 @@ export default function DimensionMatrix() {
                   <tbody className="divide-y divide-gray-800/50">
                     {sortedMatrix.map((row, i) => (
                       <tr key={i} className="text-gray-300 hover:bg-gray-800/30">
-                        {columns.map((col) => (
-                          <td
-                            key={col}
-                            className={`py-1.5 ${
-                              col === "count"
-                                ? "text-right tabular-nums"
-                                : "font-mono text-xs"
-                            }`}
-                          >
-                            {col === "count"
-                              ? Number(row[col]).toLocaleString()
-                              : String(row[col] ?? "")}
-                          </td>
-                        ))}
+                        {columns.map((col) => {
+                          const val = col === "count"
+                            ? Number(row[col]).toLocaleString()
+                            : String(row[col] ?? "");
+                          // Show colour pill for the segment dim (first non-geo dim)
+                          // so table rows visually match the donut colours
+                          const showPill = col !== "count" && col === segmentDimForMap && mapAvailable;
+                          return (
+                            <td
+                              key={col}
+                              className={`py-1.5 ${
+                                col === "count"
+                                  ? "text-right tabular-nums"
+                                  : "font-mono text-xs"
+                              }`}
+                            >
+                              {showPill ? (
+                                <span className="inline-flex items-center gap-1.5">
+                                  <span
+                                    className="w-2 h-2 rounded-full shrink-0"
+                                    style={{ backgroundColor: dimColorHex(String(row[col] ?? "")) }}
+                                  />
+                                  {val}
+                                </span>
+                              ) : (
+                                val
+                              )}
+                            </td>
+                          );
+                        })}
                       </tr>
                     ))}
                   </tbody>

@@ -6,7 +6,6 @@ import { queryApi, mutateApi, fetchApps, clearSelectedAppId } from "./api-client
 type App = {
   id: string;
   name: string;
-  geoPrecision: string;
   retentionDays: number;
   enabledDims: string[];
   createdAt: string;
@@ -239,10 +238,10 @@ const ENRICHED_DIM_GROUPS = [
       { key: "geo.country", desc: "Country code (e.g. NZ, US)" },
       { key: "geo.continent", desc: "Continent code (e.g. OC, NA)" },
       { key: "geo.timezone", desc: "Timezone (e.g. Pacific/Auckland)" },
-      { key: "geo.region", desc: "Region code (city mode only)" },
-      { key: "geo.city", desc: "City name (city mode only)" },
-      { key: "geo.latitude", desc: "Latitude (city mode only)" },
-      { key: "geo.longitude", desc: "Longitude (city mode only)" },
+      { key: "geo.region", desc: "Region code (e.g. WLG)" },
+      { key: "geo.city", desc: "City name (e.g. Wellington)" },
+      { key: "geo.latitude", desc: "Latitude" },
+      { key: "geo.longitude", desc: "Longitude" },
     ],
   },
   {
@@ -290,7 +289,6 @@ function AppSettings({
   onUpdated: (updated: App) => void;
 }) {
   const [name, setName] = useState(app.name);
-  const [geoPrecision, setGeoPrecision] = useState(app.geoPrecision);
   const [retentionDays, setRetentionDays] = useState(String(app.retentionDays));
   const [enabledDims, setEnabledDims] = useState<Set<string>>(new Set(app.enabledDims));
   const [busy, setBusy] = useState(false);
@@ -305,7 +303,6 @@ function AppSettings({
 
   const hasChanges =
     name !== app.name ||
-    geoPrecision !== app.geoPrecision ||
     retentionDays !== String(app.retentionDays) ||
     dimsChanged;
 
@@ -330,7 +327,6 @@ function AppSettings({
 
     const body: Record<string, unknown> = {};
     if (name !== app.name) body.name = name;
-    if (geoPrecision !== app.geoPrecision) body.geo_precision = geoPrecision;
     if (retentionDays !== String(app.retentionDays)) {
       body.retention_days = parseInt(retentionDays, 10);
     }
@@ -340,7 +336,6 @@ function AppSettings({
       const res = await mutateApi<{
         id: string;
         name: string;
-        geoPrecision: string;
         retentionDays: number;
         enabledDims: string[];
       }>("PATCH", `/v1/apps/${app.id}`, body);
@@ -356,7 +351,7 @@ function AppSettings({
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <label className="space-y-1">
           <span className="text-xs text-gray-400">Name</span>
           <input
@@ -365,18 +360,6 @@ function AppSettings({
             onChange={(e) => setName(e.target.value)}
             className="block w-full rounded-md bg-gray-800 border border-gray-700 px-3 py-1.5 text-sm text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
-        </label>
-        <label className="space-y-1">
-          <span className="text-xs text-gray-400">Geo Precision</span>
-          <select
-            value={geoPrecision}
-            onChange={(e) => setGeoPrecision(e.target.value)}
-            className="block w-full rounded-md bg-gray-800 border border-gray-700 px-3 py-1.5 text-sm text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
-          >
-            <option value="country">Country</option>
-            <option value="city">City</option>
-            <option value="none">None</option>
-          </select>
         </label>
         <label className="space-y-1">
           <span className="text-xs text-gray-400">Retention (days)</span>
@@ -605,7 +588,7 @@ function AppCard({
         <div>
           <span className="text-sm font-medium text-gray-100">{app.name}</span>
           <span className="ml-3 text-xs text-gray-500">
-            {app.geoPrecision} &middot; {app.retentionDays}d retention &middot;{" "}
+            {app.retentionDays}d retention &middot;{" "}
             {formatDate(app.createdAt)}
           </span>
         </div>
@@ -700,7 +683,6 @@ export default function AppManager() {
   // Create form state
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
-  const [newGeo, setNewGeo] = useState("country");
   const [newRetention, setNewRetention] = useState("90");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -730,11 +712,9 @@ export default function AppManager() {
     try {
       await mutateApi("POST", "/v1/apps", {
         name: newName.trim(),
-        geo_precision: newGeo,
         retention_days: parseInt(newRetention, 10),
       });
       setNewName("");
-      setNewGeo("country");
       setNewRetention("90");
       setShowCreate(false);
       await loadApps();
@@ -796,7 +776,7 @@ export default function AppManager() {
           className="rounded-lg border border-gray-800 bg-gray-900 p-4 space-y-3"
         >
           <h3 className="text-sm font-medium text-gray-200">Create App</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="space-y-1">
               <span className="text-xs text-gray-400">App Name</span>
               <input
@@ -807,18 +787,6 @@ export default function AppManager() {
                 className="block w-full rounded-md bg-gray-800 border border-gray-700 px-3 py-1.5 text-sm text-gray-100 placeholder:text-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 autoFocus
               />
-            </label>
-            <label className="space-y-1">
-              <span className="text-xs text-gray-400">Geo Precision</span>
-              <select
-                value={newGeo}
-                onChange={(e) => setNewGeo(e.target.value)}
-                className="block w-full rounded-md bg-gray-800 border border-gray-700 px-3 py-1.5 text-sm text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              >
-                <option value="country">Country</option>
-                <option value="city">City</option>
-                <option value="none">None</option>
-              </select>
             </label>
             <label className="space-y-1">
               <span className="text-xs text-gray-400">Retention (days)</span>

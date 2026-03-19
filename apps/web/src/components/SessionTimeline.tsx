@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { queryApi, getSelectedAppId } from "./api-client";
+import { dimColorHex } from "./dim-color";
 import AppSelector from "./AppSelector";
 import type {
   SessionsQueryResponse,
@@ -44,24 +45,7 @@ function durationBetween(first: string, last: string): string {
   return `${hours}h ${remainMin}m`;
 }
 
-/** Event type color based on hash of event name */
-function eventColor(name: string): string {
-  const colors = [
-    "text-blue-300",
-    "text-green-300",
-    "text-yellow-300",
-    "text-purple-300",
-    "text-pink-300",
-    "text-cyan-300",
-    "text-orange-300",
-    "text-emerald-300",
-  ];
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) {
-    hash = (hash * 31 + name.charCodeAt(i)) | 0;
-  }
-  return colors[Math.abs(hash) % colors.length];
-}
+
 
 const LIMIT_PRESETS = [10, 25, 50, 100] as const;
 const ALL_LIMIT = 1000; // backend MAX_LIMIT
@@ -464,7 +448,8 @@ export default function SessionTimeline() {
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-1.5">
                                 <span
-                                  className={`font-mono text-xs font-medium truncate ${eventColor(ev.event_name)}`}
+                                  className="font-mono text-xs font-medium truncate"
+                                  style={{ color: dimColorHex(ev.event_name) }}
                                 >
                                   {ev.event_name}
                                 </span>
