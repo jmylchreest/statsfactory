@@ -13,3 +13,7 @@ contrib/examples/go/go
 wrangler-deploy*.toml
 apps/web/wrangler.toml
 *.toml.clean
+/apps/web/.aide/bin/aide
+/apps/web/.aide/memory/memory.db
+/apps/web/.aide/memory/search.bleve/index_meta.json
+/apps/web/.aide/memory/search.bleve/store
