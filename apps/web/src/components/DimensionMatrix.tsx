@@ -237,10 +237,16 @@ export default function DimensionMatrix() {
 
   const { isoFrom, isoTo } = toISORange(range);
 
+  // Version counters to prevent stale async responses from overwriting fresh state.
+  const eventsVersion = useRef(0);
+  const dimsVersion = useRef(0);
+  const matrixVersion = useRef(0);
+
   // ── Data fetching ───────────────────────────────────────────────────────
 
   const fetchEvents = useCallback(async () => {
     if (!appId) return;
+    const version = ++eventsVersion.current;
     setLoadingEvents(true);
     setError(null);
     try {
@@ -250,20 +256,23 @@ export default function DimensionMatrix() {
         to: isoTo,
         granularity: "day",
       });
+      if (version !== eventsVersion.current) return;
       const names = res.top_events.map((e) => e.eventName);
       setEventNames(names);
       if (names.length > 0 && selectedEvents.length === 0) {
         setSelectedEvents([names[0]]);
       }
     } catch (err) {
+      if (version !== eventsVersion.current) return;
       setError(extractError(err));
     } finally {
-      setLoadingEvents(false);
+      if (version === eventsVersion.current) setLoadingEvents(false);
     }
   }, [appId, isoFrom, isoTo]);
 
   const fetchDimensions = useCallback(async () => {
     if (!appId || selectedEvents.length === 0) return;
+    const version = ++dimsVersion.current;
     setLoadingDims(true);
     setError(null);
     try {
@@ -276,14 +285,16 @@ export default function DimensionMatrix() {
           to: isoTo,
         },
       );
+      if (version !== dimsVersion.current) return;
       setAvailableDims(res.dimensions);
       setSelectedDims([]);
       setFilters([]);
       setMatrix([]);
     } catch (err) {
+      if (version !== dimsVersion.current) return;
       setError(extractError(err));
     } finally {
-      setLoadingDims(false);
+      if (version === dimsVersion.current) setLoadingDims(false);
     }
   }, [appId, selectedEvents, isoFrom, isoTo]);
 
@@ -296,6 +307,7 @@ export default function DimensionMatrix() {
       setMatrix([]);
       return;
     }
+    const version = ++matrixVersion.current;
     setLoadingMatrix(true);
     setError(null);
     try {
@@ -310,12 +322,14 @@ export default function DimensionMatrix() {
         params.filter = filters.map((f) => `${f.key}:eq:${f.value}`);
       }
       const res = await queryApi<MatrixQueryResponse>("/v1/query/matrix", params);
+      if (version !== matrixVersion.current) return;
       setMatrix(res.matrix);
       setSort({ column: "count", direction: "desc" });
     } catch (err) {
+      if (version !== matrixVersion.current) return;
       setError(extractError(err));
     } finally {
-      setLoadingMatrix(false);
+      if (version === matrixVersion.current) setLoadingMatrix(false);
     }
   }, [appId, selectedEvents, selectedDims, minDims, filters, isoFrom, isoTo]);
 

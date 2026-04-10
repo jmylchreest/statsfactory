@@ -59,7 +59,11 @@ function eventsWhere(appId: string, params: { from: string; to: string; eventNam
 function filterCondition(alias: string, f: DimensionFilter): ReturnType<typeof sql> {
   switch (f.op) {
     case "eq":
-      return sql`${sql.raw(alias)}.dim_value = ${f.value}`;
+      // For scalars: exact match. For arrays: any element equals the value.
+      return sql`(
+        (${sql.raw(alias)}.dim_type != 'array' AND ${sql.raw(alias)}.dim_value = ${f.value})
+        OR (${sql.raw(alias)}.dim_type = 'array' AND EXISTS (SELECT 1 FROM json_each(${sql.raw(alias)}.dim_value) WHERE json_each.value = ${f.value}))
+      )`;
 
     case "neq":
       return sql`${sql.raw(alias)}.dim_value != ${f.value}`;
@@ -98,11 +102,16 @@ function filterCondition(alias: string, f: DimensionFilter): ReturnType<typeof s
  * value matching (eq, neq, contains, in). Array dimensions are supported via
  * SQLite json_each() for contains/in operators.
  */
-async function filteredEventIds(
-  db: Database,
-  appId: string,
-  params: { from: string; to: string; eventName?: string; eventNames?: string[]; filters: DimensionFilter[] },
-): Promise<string[] | null> {
+/**
+ * Build a SQL subquery that selects event IDs matching all dimension filters.
+ *
+ * Returns a SQL fragment suitable for `e.id IN (subquery)`, or null if no
+ * filters are active. Using a subquery instead of materializing IDs avoids
+ * D1's 100 bind-parameter limit when many events match the filter.
+ */
+function filteredEventIdsSubquery(
+  params: { from: string; to: string; eventName?: string; eventNames?: string[]; filters: DimensionFilter[]; appId: string },
+): ReturnType<typeof sql> | null {
   if (params.filters.length === 0) return null;
 
   // Build a query that self-joins event_dimensions for each filter.
@@ -110,17 +119,21 @@ async function filteredEventIds(
   const joinParts = params.filters.map((f, i) => {
     const alias = `df${i}`;
     if (f.op === "neq") {
-      // LEFT JOIN: find events where the dim either doesn't exist or has a different value
-      return sql`LEFT JOIN event_dimensions ${sql.raw(alias)} ON ${sql.raw(alias)}.event_id = e.id AND ${sql.raw(alias)}.dim_key = ${f.key} AND ${sql.raw(alias)}.dim_value = ${f.value}`;
+      // LEFT JOIN: find events where the dim either doesn't exist or has a different value.
+      // For arrays, match if ANY element equals the value (so we can exclude those events).
+      return sql`LEFT JOIN event_dimensions ${sql.raw(alias)} ON ${sql.raw(alias)}.event_id = e2.id AND ${sql.raw(alias)}.dim_key = ${f.key} AND (
+        (${sql.raw(alias)}.dim_type != 'array' AND ${sql.raw(alias)}.dim_value = ${f.value})
+        OR (${sql.raw(alias)}.dim_type = 'array' AND EXISTS (SELECT 1 FROM json_each(${sql.raw(alias)}.dim_value) WHERE json_each.value = ${f.value}))
+      )`;
     }
     // INNER JOIN with operator-specific condition
-    return sql`INNER JOIN event_dimensions ${sql.raw(alias)} ON ${sql.raw(alias)}.event_id = e.id AND ${sql.raw(alias)}.dim_key = ${f.key} AND ${filterCondition(alias, f)}`;
+    return sql`INNER JOIN event_dimensions ${sql.raw(alias)} ON ${sql.raw(alias)}.event_id = e2.id AND ${sql.raw(alias)}.dim_key = ${f.key} AND ${filterCondition(alias, f)}`;
   });
 
   const conditions = [
-    sql`e.app_id = ${appId}`,
-    sql`e.timestamp >= ${params.from}`,
-    sql`e.timestamp <= ${params.to}`,
+    sql`e2.app_id = ${params.appId}`,
+    sql`e2.timestamp >= ${params.from}`,
+    sql`e2.timestamp <= ${params.to}`,
   ];
 
   // For neq: add WHERE df{i}.event_id IS NULL (no matching row = value doesn't match)
@@ -133,25 +146,22 @@ async function filteredEventIds(
   // Support both single eventName and array eventNames
   const names = params.eventNames ?? (params.eventName ? [params.eventName] : []);
   if (names.length === 1) {
-    conditions.push(sql`e.event_name = ${names[0]}`);
+    conditions.push(sql`e2.event_name = ${names[0]}`);
   } else if (names.length > 1) {
     conditions.push(
-      sql`e.event_name IN (${sql.join(
+      sql`e2.event_name IN (${sql.join(
         names.map((n) => sql`${n}`),
         sql`, `,
       )})`,
     );
   }
 
-  const query = sql`
-    SELECT DISTINCT e.id
-    FROM events e
+  return sql`
+    SELECT DISTINCT e2.id
+    FROM events e2
     ${sql.join(joinParts, sql` `)}
     WHERE ${sql.join(conditions, sql` AND `)}
   `;
-
-  const rows = await db.all(query);
-  return (rows as Array<{ id: string }>).map((r) => r.id);
 }
 
 // ── Query functions ─────────────────────────────────────────────────────────
@@ -170,20 +180,21 @@ export async function queryEventTimeSeries(
   appId: string,
   params: EventsQueryParams,
 ): Promise<TimeSeriesBucket[]> {
-  const eventIds = await filteredEventIds(db, appId, {
+  const filterSql = filteredEventIdsSubquery({
     from: params.from,
     to: params.to,
     eventName: params.eventName,
     filters: params.filters,
+    appId,
   });
 
   const bucket = timeBucket(params.granularity);
   const baseWhere = eventsWhere(appId, params);
 
-  if (eventIds !== null && eventIds.length === 0) return [];
-
   const where =
-    eventIds !== null ? and(baseWhere, inArray(events.id, eventIds))! : baseWhere;
+    filterSql !== null
+      ? and(baseWhere, sql`${events.id} IN (${filterSql})`)!
+      : baseWhere;
 
   const rows = await db
     .select({
@@ -297,14 +308,13 @@ export async function queryBreakdown(
   appId: string,
   params: BreakdownQueryParams,
 ): Promise<BreakdownRow[]> {
-  const eventIds = await filteredEventIds(db, appId, {
+  const filterSql = filteredEventIdsSubquery({
     from: params.from,
     to: params.to,
     eventName: params.eventName,
     filters: params.filters,
+    appId,
   });
-
-  if (eventIds !== null && eventIds.length === 0) return [];
 
   // Base conditions shared by both branches
   const baseConds = [
@@ -314,10 +324,8 @@ export async function queryBreakdown(
     sql`e.event_name = ${params.eventName}`,
     sql`d.dim_key = ${params.dimKey}`,
   ];
-  if (eventIds !== null) {
-    baseConds.push(
-      sql`e.id IN (${sql.join(eventIds.map((id) => sql`${id}`), sql`, `)})`,
-    );
+  if (filterSql !== null) {
+    baseConds.push(sql`e.id IN (${filterSql})`);
   }
 
   const whereSql = sql.join(baseConds, sql` AND `);
@@ -373,14 +381,13 @@ export async function queryMatrix(
   appId: string,
   params: MatrixQueryParams,
 ): Promise<MatrixRow[]> {
-  const eventIds = await filteredEventIds(db, appId, {
+  const filterSql = filteredEventIdsSubquery({
     from: params.from,
     to: params.to,
     eventNames: params.eventNames,
     filters: params.filters,
+    appId,
   });
-
-  if (eventIds !== null && eventIds.length === 0) return [];
 
   // Separate "event_name" (virtual column on events table) from real dimension keys
   const hasEventNameDim = params.dimensions.includes("event_name");
@@ -445,13 +452,8 @@ export async function queryMatrix(
     );
   }
 
-  if (eventIds !== null) {
-    conditions.push(
-      sql`e.id IN (${sql.join(
-        eventIds.map((id) => sql`${id}`),
-        sql`, `,
-      )})`,
-    );
+  if (filterSql !== null) {
+    conditions.push(sql`e.id IN (${filterSql})`);
   }
 
   // For scalar dims, json_each produces NULL — filter those out so scalars
