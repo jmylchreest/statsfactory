@@ -68,6 +68,84 @@ build:
 preview:
     cd {{web}} && bun run preview
 
+# ── Release ──────────────────────────────────────────────────────────
+
+# Version files to update on release
+version_files := "apps/web/package.json packages/sdk-ts/package.json"
+
+# Auto-detect next version from latest git tag (patch bump)
+latest_tag := `git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' 2>/dev/null || echo ""`
+
+# Bump patch version, update manifests, commit, and tag
+# Usage: just release [version]
+release version="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
+        echo "Error: Working directory is dirty. Commit or stash your changes first."
+        exit 1
+    fi
+    V="{{version}}"
+    if [ -z "$V" ]; then
+        LATEST="{{latest_tag}}"
+        if [ -z "$LATEST" ]; then
+            V="0.0.1"
+        else
+            MAJOR=$(echo "$LATEST" | sed 's/^v//' | cut -d. -f1)
+            MINOR=$(echo "$LATEST" | sed 's/^v//' | cut -d. -f2)
+            PATCH=$(echo "$LATEST" | sed 's/^v//' | cut -d. -f3)
+            V="${MAJOR}.${MINOR}.$((PATCH + 1))"
+        fi
+    fi
+    echo "$V" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "Error: version must be semver (e.g. 1.2.3), got: $V"; exit 1; }
+    echo "Releasing v${V}..."
+    for f in {{version_files}}; do
+        sed -i "s/\"version\": *\"[^\"]*\"/\"version\": \"${V}\"/" "$f"
+    done
+    echo "Updated: {{version_files}}"
+    bun install
+    git add {{version_files}} bun.lock
+    git commit -m "release: v${V}"
+    git tag -a "v${V}" -m "v${V}"
+    echo ""
+    echo "Tagged v${V}. Push with:"
+    echo "  git push origin main v${V}"
+
+# Release and push in one step
+release-push version="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just release "{{version}}"
+    TAG=$(git describe --tags --abbrev=0)
+    git push origin main "$TAG"
+
+# Show current version (latest tag or snapshot)
+get-version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    LATEST="{{latest_tag}}"
+    CURRENT_COMMIT=$(git rev-parse HEAD)
+    if [ -z "$LATEST" ]; then
+        SHORT=$(git rev-parse --short HEAD)
+        echo "v0.0.1-${SHORT}-SNAPSHOT"
+    else
+        TAG_COMMIT=$(git rev-parse "${LATEST}^{commit}" 2>/dev/null)
+        if [ "$CURRENT_COMMIT" = "$TAG_COMMIT" ]; then
+            echo "$LATEST"
+        else
+            MAJOR=$(echo "$LATEST" | sed 's/^v//' | cut -d. -f1)
+            MINOR=$(echo "$LATEST" | sed 's/^v//' | cut -d. -f2)
+            PATCH=$(echo "$LATEST" | sed 's/^v//' | cut -d. -f3)
+            NEXT="v${MAJOR}.${MINOR}.$((PATCH + 1))"
+            SHORT=$(git rev-parse --short HEAD)
+            if git diff --quiet 2>/dev/null; then
+                echo "${NEXT}-${SHORT}-SNAPSHOT"
+            else
+                echo "${NEXT}-${SHORT}-SNAPSHOT-dirty"
+            fi
+        fi
+    fi
+
 # ── Utilities ────────────────────────────────────────────────────────
 
 # Send random test events to D1 dev server (port 8787)
