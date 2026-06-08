@@ -168,15 +168,19 @@ function filteredEventIdsSubquery(
 
 /**
  * SQL expression for the requested aggregation function.
- * Non-count aggregations operate on events.value; call sites must add
- * a `value IS NOT NULL` guard so only metric events are included.
+ *
+ * tableAlias must be provided when called from raw SQL queries where the
+ * events table is aliased (e.g. "FROM events e") — Drizzle's column reference
+ * `events.value` expands to `"events"."value"` which is invalid when the table
+ * has an alias. Pass the alias string to use `e.value` instead.
  */
-function aggregateExpr(aggregation: Aggregation) {
+function aggregateExpr(aggregation: Aggregation, tableAlias?: string): ReturnType<typeof sql> {
+  const val = tableAlias ? sql.raw(`${tableAlias}.value`) : events.value;
   switch (aggregation) {
-    case "sum": return sql<number>`SUM(${events.value})`;
-    case "avg": return sql<number>`AVG(${events.value})`;
-    case "min": return sql<number>`MIN(${events.value})`;
-    case "max": return sql<number>`MAX(${events.value})`;
+    case "sum": return sql<number>`SUM(${val})`;
+    case "avg": return sql<number>`AVG(${val})`;
+    case "min": return sql<number>`MIN(${val})`;
+    case "max": return sql<number>`MAX(${val})`;
     default:    return sql<number>`COUNT(*)`;
   }
 }
@@ -492,7 +496,7 @@ export async function queryMatrix(
     conditions.push(sql`e.value IS NOT NULL`);
   }
 
-  const aggExpr = aggregateExpr(params.aggregation);
+  const aggExpr = aggregateExpr(params.aggregation, "e");
 
   const query = sql`
     SELECT ${sql.join([...selectParts, sql`${aggExpr} AS count`], sql`, `)}
@@ -594,7 +598,7 @@ export async function queryMatrixTrend(
   if (filterSql !== null) conditions.push(sql`e.id IN (${filterSql})`);
   if (params.aggregation !== "count") conditions.push(sql`e.value IS NOT NULL`);
 
-  const aggExpr = aggregateExpr(params.aggregation);
+  const aggExpr = aggregateExpr(params.aggregation, "e");
 
   const query = sql`
     SELECT ${sql.join([...selectParts, sql`${aggExpr} AS count`], sql`, `)}
