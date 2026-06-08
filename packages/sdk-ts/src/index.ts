@@ -90,6 +90,13 @@ export interface TrackOptions {
 
   /** Set a distinct ID (user/install identity) for this event. */
   distinctId?: string;
+
+  /**
+   * Optional numeric value for metric aggregation.
+   * When provided, the event can be queried with SUM/AVG/MIN/MAX aggregation.
+   * Absence means the event is count-only (default behaviour unchanged).
+   */
+  value?: number;
 }
 
 // ── Internal types ───────────────────────────────────────────────────────────
@@ -100,6 +107,7 @@ interface Event {
   timestamp?: string;
   session_id?: string;
   distinct_id?: string;
+  value?: number;
   dimensions?: Dims;
 }
 
@@ -280,6 +288,10 @@ export class StatsFactory {
 
     if (options?.distinctId) {
       ev.distinct_id = options.distinctId;
+    }
+
+    if (options?.value !== undefined) {
+      ev.value = options.value;
     }
 
     if (dims && Object.keys(dims).length > 0) {

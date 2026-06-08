@@ -12,7 +12,7 @@ import { z } from "@hono/zod-openapi";
 // D1 enforces a 100 bind-parameter-per-statement limit. These constants are
 // tuned so that ingestion chunking stays within that limit:
 //
-//   events table:         7 cols → max 14 rows/chunk (98 params)
+//   events table:         8 cols → max 12 rows/chunk (96 params)
 //   event_dimensions:     4 cols → max 25 rows/chunk (100 params)
 //
 // Each dimension costs 1 extra row written (event_dimensions). Rollups are
@@ -31,6 +31,7 @@ import { z } from "@hono/zod-openapi";
 // At typical usage (10 user + 5 enriched = 15 dims): 16 rows/event.
 // On D1 free tier (100K writes/day): ~6,250 events/day typical.
 // At max (25 user + 9 enriched = 34 dims): 35 rows/event → ~2,857 events/day.
+// The events table now has 8 cols (added value column): 100/8 = 12 rows/chunk.
 
 export const MAX_EVENTS_PER_BATCH = 25;
 export const MAX_DIMENSIONS_PER_EVENT = 25;
@@ -51,6 +52,16 @@ export const ErrorResponseSchema = z
     error: z.string(),
   })
   .openapi("ErrorResponse");
+
+/** Aggregation function for numeric value queries. Defaults to "count". */
+export const AggregationSchema = z
+  .enum(["count", "sum", "avg", "min", "max"])
+  .default("count")
+  .openapi({
+    example: "count",
+    description:
+      'Aggregation function. "count" counts events regardless of value. "sum"/"avg"/"min"/"max" aggregate the numeric value field — only events with a value are included.',
+  });
 
 // ── Ingest schemas ──────────────────────────────────────────────────────────
 
@@ -86,6 +97,11 @@ export const IngestEventSchema = z
     distinct_id: z.string().optional().openapi({
       example: "user_42",
       description: "Client-provided distinct user identifier.",
+    }),
+    value: z.number().optional().openapi({
+      example: 42.5,
+      description:
+        "Optional numeric value for metric aggregation. When provided, the event can be queried with SUM/AVG/MIN/MAX aggregation. Absence means the event is count-only.",
     }),
     dimensions: z
       .record(
@@ -225,6 +241,7 @@ export const EventsQuerySchema = z
         description:
           'Dimension filter(s) in "key:op:value" format. Operators: eq, neq, contains, in. For "in", comma-separate values (e.g. geo.country:in:NZ,AU). Repeatable.',
       }),
+    aggregation: AggregationSchema.optional(),
   })
   .openapi("EventsQuery");
 
@@ -253,6 +270,9 @@ export const EventsResponseSchema = z
     }),
   })
   .openapi("EventsResponse");
+
+export const DEFAULT_TREND_LIMIT = 5000;
+export const MAX_TREND_LIMIT = 10_000;
 
 /** Query params for GET /v1/query/dimensions. */
 export const DimensionsQuerySchema = z
@@ -334,6 +354,7 @@ export const BreakdownQuerySchema = z
         example: "100",
         description: `Max results (1-${MAX_LIMIT}, default ${DEFAULT_LIMIT}).`,
       }),
+    aggregation: AggregationSchema.optional(),
   })
   .openapi("BreakdownQuery");
 
@@ -399,6 +420,7 @@ export const MatrixQuerySchema = z
         example: "100",
         description: `Max results (1-${MAX_LIMIT}, default ${DEFAULT_LIMIT}).`,
       }),
+    aggregation: AggregationSchema.optional(),
   })
   .openapi("MatrixQuery");
 
@@ -413,9 +435,76 @@ export const MatrixResponseSchema = z
       to: z.string(),
       filters: z.array(DimensionFilterSchema),
       limit: z.number(),
+      aggregation: z.string(),
     }),
   })
   .openapi("MatrixResponse");
+
+/** Query params for GET /v1/query/matrix-trend. */
+export const MatrixTrendQuerySchema = z
+  .object({
+    app_id: z.string().min(1).openapi({
+      example: "01J1ABCDE...",
+      description: "App ID to query (ULID, required).",
+    }),
+    event_name: z
+      .union([z.string(), z.array(z.string())])
+      .openapi({
+        example: "page_view",
+        description: "Event type(s). Same as matrix query.",
+      }),
+    dimensions: z
+      .union([z.string(), z.array(z.string())])
+      .openapi({
+        example: ["plugin.name", "plugin.status"],
+        description: "Dimension keys (2+, same as matrix query).",
+      }),
+    from: z.string().datetime({ offset: true }).openapi({
+      example: "2026-03-01T00:00:00Z",
+      description: "Start date (ISO 8601, required).",
+    }),
+    to: z.string().datetime({ offset: true }).openapi({
+      example: "2026-03-15T00:00:00Z",
+      description: "End date (ISO 8601, required).",
+    }),
+    granularity: z.enum(["hour", "day"]).optional().default("day").openapi({
+      example: "day",
+      description: 'Time bucket granularity. Defaults to "day".',
+    }),
+    filter: z
+      .union([z.string(), z.array(z.string())])
+      .optional()
+      .openapi({
+        example: "geo.country:eq:NZ",
+        description: 'Dimension filter(s) in "key:op:value" format.',
+      }),
+    limit: z
+      .string()
+      .optional()
+      .openapi({
+        example: "5000",
+        description: `Max (row×bucket) results (default ${DEFAULT_TREND_LIMIT}, max ${MAX_TREND_LIMIT}).`,
+      }),
+    aggregation: AggregationSchema.optional(),
+  })
+  .openapi("MatrixTrendQuery");
+
+/** Response for GET /v1/query/matrix-trend. */
+export const MatrixTrendResponseSchema = z
+  .object({
+    trend: z.array(z.record(z.string(), z.union([z.string(), z.number()]))),
+    meta: z.object({
+      event_name: z.union([z.string(), z.array(z.string())]),
+      dimensions: z.array(z.string()),
+      from: z.string(),
+      to: z.string(),
+      granularity: z.string(),
+      filters: z.array(DimensionFilterSchema),
+      limit: z.number(),
+      aggregation: z.string(),
+    }),
+  })
+  .openapi("MatrixTrendResponse");
 
 // ── Session schemas ─────────────────────────────────────────────────────────
 
@@ -792,6 +881,7 @@ export function parseLimit(raw: string | undefined, defaultVal: number, max: num
 // ── Re-exported types ───────────────────────────────────────────────────────
 
 export type Granularity = "hour" | "day";
+export type Aggregation = "count" | "sum" | "avg" | "min" | "max";
 
 export type DimensionFilter = z.infer<typeof DimensionFilterSchema>;
 
@@ -801,6 +891,7 @@ export type EventsQueryParams = {
   to: string;
   granularity: Granularity;
   filters: DimensionFilter[];
+  aggregation: Aggregation;
 };
 
 export type DimensionsQueryParams = {
@@ -816,6 +907,7 @@ export type BreakdownQueryParams = {
   to: string;
   filters: DimensionFilter[];
   limit: number;
+  aggregation: Aggregation;
 };
 
 export type MatrixQueryParams = {
@@ -825,6 +917,18 @@ export type MatrixQueryParams = {
   to: string;
   filters: DimensionFilter[];
   limit: number;
+  aggregation: Aggregation;
+};
+
+export type MatrixTrendQueryParams = {
+  eventNames: string[];
+  dimensions: string[];
+  from: string;
+  to: string;
+  granularity: Granularity;
+  filters: DimensionFilter[];
+  limit: number;
+  aggregation: Aggregation;
 };
 
 export type CreateAppBody = z.infer<typeof CreateAppSchema>;

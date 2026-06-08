@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, primaryKey, index } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, primaryKey, index } from "drizzle-orm/sqlite-core";
 
 // ── Apps ────────────────────────────────────────────────────────────────────
 
@@ -41,6 +41,7 @@ export const events = sqliteTable(
     timestamp: text("timestamp").notNull(), // ISO 8601, client-provided
     sessionId: text("session_id"),
     distinctId: text("distinct_id"),
+    value: real("value"), // nullable — absent means count-only event
     createdAt: text("created_at").notNull(), // server receive time
   },
   (table) => [

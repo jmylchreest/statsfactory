@@ -8,6 +8,8 @@ import {
   BreakdownResponseSchema,
   MatrixQuerySchema,
   MatrixResponseSchema,
+  MatrixTrendQuerySchema,
+  MatrixTrendResponseSchema,
   SessionsQuerySchema,
   SessionsResponseSchema,
   SessionTimelineQuerySchema,
@@ -19,6 +21,8 @@ import {
   MAX_FILTERS,
   MAX_LIMIT,
   DEFAULT_LIMIT,
+  DEFAULT_TREND_LIMIT,
+  MAX_TREND_LIMIT,
 } from "../lib/schemas";
 import {
   queryEventTimeSeries,
@@ -26,6 +30,7 @@ import {
   queryDimensionKeys,
   queryBreakdown,
   queryMatrix,
+  queryMatrixTrend,
   querySessions,
   querySessionTimeline,
 } from "../lib/query-builder";
@@ -79,10 +84,11 @@ queryRouter.openapi(eventsRoute, async (c) => {
 
   const granularity = query.granularity ?? "day";
   const eventName = query.event_name;
+  const aggregation = query.aggregation ?? "count";
 
   const db = c.get("db");
 
-  const params = { from, to, granularity, filters, eventName };
+  const params = { from, to, granularity, filters, eventName, aggregation };
 
   try {
     const [timeSeries, topEvents] = await Promise.all([
@@ -236,6 +242,7 @@ queryRouter.openapi(breakdownRoute, async (c) => {
     to,
     filters,
     limit,
+    aggregation: query.aggregation ?? "count",
   };
 
   try {
@@ -323,6 +330,7 @@ queryRouter.openapi(matrixRoute, async (c) => {
   const db = c.get("db");
 
   try {
+    const aggregation = query.aggregation ?? "count";
     const rows = await queryMatrix(db, appId, {
       eventNames,
       dimensions,
@@ -330,6 +338,7 @@ queryRouter.openapi(matrixRoute, async (c) => {
       to,
       filters,
       limit,
+      aggregation,
     });
     return c.json({
       matrix: rows,
@@ -340,10 +349,103 @@ queryRouter.openapi(matrixRoute, async (c) => {
         to,
         filters,
         limit,
+        aggregation,
       },
     });
   } catch (err) {
     console.error("Query matrix failed:", err);
+    return c.json({ error: "Query failed" }, 500);
+  }
+});
+
+// ── GET /v1/query/matrix-trend ──────────────────────────────────────────────
+
+const matrixTrendRoute = createRoute({
+  method: "get",
+  path: "/query/matrix-trend",
+  tags: ["Query"],
+  summary: "Matrix cross-tabulation with time buckets (sparkline data)",
+  description:
+    "Returns the same cross-tabulation as /matrix but grouped by time bucket, enabling per-row sparkline trend charts. Protected by Cloudflare Access.",
+  security: [{ CfAccess: [] }],
+  request: {
+    query: MatrixTrendQuerySchema,
+  },
+  responses: {
+    200: {
+      content: { "application/json": { schema: MatrixTrendResponseSchema } },
+      description: "Matrix trend data.",
+    },
+    400: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Invalid query parameters.",
+    },
+    500: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Query failed.",
+    },
+  },
+});
+
+queryRouter.openapi(matrixTrendRoute, async (c) => {
+  const query = c.req.valid("query");
+  const appId = query.app_id;
+
+  const rawEvents = query.event_name;
+  const eventNames = Array.isArray(rawEvents) ? rawEvents : rawEvents ? [rawEvents] : [];
+  if (eventNames.length === 0) {
+    return c.json({ error: 'At least one "event_name" is required' }, 400);
+  }
+
+  const rawDims = query.dimensions;
+  const dimensions = Array.isArray(rawDims) ? rawDims : rawDims ? [rawDims] : [];
+  if (dimensions.length < 2) {
+    return c.json({ error: 'At least 2 "dimensions" are required' }, 400);
+  }
+
+  const from = new Date(query.from).toISOString();
+  const to = new Date(query.to).toISOString();
+
+  if (from > to) {
+    return c.json({ error: '"from" must be before "to"' }, 400);
+  }
+
+  const filters = parseFilters(query.filter);
+  if (filters.length > MAX_FILTERS) {
+    return c.json({ error: `Too many filters: ${filters.length} (max ${MAX_FILTERS})` }, 400);
+  }
+
+  const granularity = query.granularity ?? "day";
+  const aggregation = query.aggregation ?? "count";
+  const limit = parseLimit(query.limit, DEFAULT_TREND_LIMIT, MAX_TREND_LIMIT);
+  const db = c.get("db");
+
+  try {
+    const rows = await queryMatrixTrend(db, appId, {
+      eventNames,
+      dimensions,
+      from,
+      to,
+      granularity,
+      filters,
+      limit,
+      aggregation,
+    });
+    return c.json({
+      trend: rows,
+      meta: {
+        event_name: eventNames.length === 1 ? eventNames[0] : eventNames,
+        dimensions,
+        from,
+        to,
+        granularity,
+        filters,
+        limit,
+        aggregation,
+      },
+    });
+  } catch (err) {
+    console.error("Query matrix-trend failed:", err);
     return c.json({ error: "Query failed" }, 500);
   }
 });

@@ -26,6 +26,8 @@ import type {
   DimensionsQueryResponse,
   BreakdownQueryResponse,
   MatrixQueryResponse,
+  MatrixTrendQueryResponse,
+  MatrixTrendRow,
   MatrixRow,
   DimensionKey,
 } from "./types";
@@ -196,6 +198,44 @@ function TreemapContent(props: {
 // ── Main component ──────────────────────────────────────────────────────────
 
 type ChartType = "bar" | "treemap" | "map";
+type Aggregation = "count" | "sum" | "avg" | "min" | "max";
+
+const AGGREGATION_LABELS: Record<Aggregation, string> = {
+  count: "Count",
+  sum: "Sum",
+  avg: "Avg",
+  min: "Min",
+  max: "Max",
+};
+
+// ── Sparkline ───────────────────────────────────────────────────────────────
+
+function Sparkline({ data }: { data: { count: number }[] }) {
+  if (data.length < 2) return <span className="text-gray-600 text-xs">—</span>;
+  const max = Math.max(...data.map((d) => d.count));
+  const min = Math.min(...data.map((d) => d.count));
+  const range = max - min || 1;
+  const W = 80, H = 22, PAD = 2;
+  const points = data
+    .map((d, i) => {
+      const x = PAD + (i / (data.length - 1)) * (W - 2 * PAD);
+      const y = H - PAD - ((d.count - min) / range) * (H - 2 * PAD);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  return (
+    <svg width={W} height={H} className="overflow-visible">
+      <polyline
+        points={points}
+        fill="none"
+        stroke="#3b82f6"
+        strokeWidth={1.5}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
 
 export default function DimensionMatrix() {
   const [appId, setAppId] = useState<string | null>(getSelectedAppId());
@@ -227,8 +267,16 @@ export default function DimensionMatrix() {
   const [loadingMatrix, setLoadingMatrix] = useState(false);
   const [sort, setSort] = useState<SortConfig>({ column: "count", direction: "desc" });
 
+  // Aggregation
+  const [aggregation, setAggregation] = useState<Aggregation>("count");
+
   // Chart
   const [chartType, setChartType] = useState<ChartType>("bar");
+
+  // Sparklines
+  const [showSparklines, setShowSparklines] = useState(false);
+  const [trendData, setTrendData] = useState<MatrixTrendRow[]>([]);
+  const [loadingTrend, setLoadingTrend] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
 
@@ -241,6 +289,7 @@ export default function DimensionMatrix() {
   const eventsVersion = useRef(0);
   const dimsVersion = useRef(0);
   const matrixVersion = useRef(0);
+  const trendVersion = useRef(0);
 
   // ── Data fetching ───────────────────────────────────────────────────────
 
@@ -305,6 +354,7 @@ export default function DimensionMatrix() {
   const fetchMatrix = useCallback(async () => {
     if (!appId || selectedEvents.length === 0 || selectedDims.length < minDims) {
       setMatrix([]);
+      setTrendData([]);
       return;
     }
     const version = ++matrixVersion.current;
@@ -317,6 +367,7 @@ export default function DimensionMatrix() {
         dimensions: selectedDims,
         from: isoFrom,
         to: isoTo,
+        aggregation,
       };
       if (filters.length > 0) {
         params.filter = filters.map((f) => `${f.key}:eq:${f.value}`);
@@ -324,6 +375,7 @@ export default function DimensionMatrix() {
       const res = await queryApi<MatrixQueryResponse>("/v1/query/matrix", params);
       if (version !== matrixVersion.current) return;
       setMatrix(res.matrix);
+      setTrendData([]);
       setSort({ column: "count", direction: "desc" });
     } catch (err) {
       if (version !== matrixVersion.current) return;
@@ -331,11 +383,40 @@ export default function DimensionMatrix() {
     } finally {
       if (version === matrixVersion.current) setLoadingMatrix(false);
     }
-  }, [appId, selectedEvents, selectedDims, minDims, filters, isoFrom, isoTo]);
+  }, [appId, selectedEvents, selectedDims, minDims, filters, isoFrom, isoTo, aggregation]);
+
+  const fetchTrend = useCallback(async () => {
+    if (!appId || selectedEvents.length === 0 || selectedDims.length < minDims) return;
+    const version = ++trendVersion.current;
+    setLoadingTrend(true);
+    try {
+      const params: Record<string, string | string[] | undefined> = {
+        app_id: appId,
+        event_name: selectedEvents.length === 1 ? selectedEvents[0] : selectedEvents,
+        dimensions: selectedDims,
+        from: isoFrom,
+        to: isoTo,
+        granularity: "day",
+        aggregation,
+      };
+      if (filters.length > 0) {
+        params.filter = filters.map((f) => `${f.key}:eq:${f.value}`);
+      }
+      const res = await queryApi<MatrixTrendQueryResponse>("/v1/query/matrix-trend", params);
+      if (version !== trendVersion.current) return;
+      setTrendData(res.trend);
+    } catch {
+      if (version !== trendVersion.current) return;
+      setTrendData([]);
+    } finally {
+      if (version === trendVersion.current) setLoadingTrend(false);
+    }
+  }, [appId, selectedEvents, selectedDims, minDims, filters, isoFrom, isoTo, aggregation]);
 
   useEffect(() => { fetchEvents(); }, [fetchEvents]);
   useEffect(() => { fetchDimensions(); }, [fetchDimensions]);
   useEffect(() => { fetchMatrix(); }, [fetchMatrix]);
+  useEffect(() => { if (showSparklines && matrix.length > 0) fetchTrend(); }, [showSparklines, fetchTrend, matrix.length]);
 
   // ── Handlers ────────────────────────────────────────────────────────────
 
@@ -435,7 +516,17 @@ export default function DimensionMatrix() {
   // Columns: selectedDims order is user-controlled (via drag reorder).
   // event_name is just another dimension when selected.
   const effectiveDims = selectedDims;
-  const columns = [...effectiveDims, "count"];
+  const aggLabel = AGGREGATION_LABELS[aggregation];
+  const columns = [...effectiveDims, "count", ...(showSparklines ? ["_sparkline"] : [])];
+
+  // Group trend data by dimension combination key for O(1) sparkline lookup.
+  const trendByKey = new Map<string, { bucket: string; count: number }[]>();
+  for (const row of trendData) {
+    const key = effectiveDims.map((d) => String(row[d] ?? "")).join("\x00");
+    const list = trendByKey.get(key) ?? [];
+    list.push({ bucket: row.bucket, count: row.count });
+    trendByKey.set(key, list);
+  }
 
   // ── Chart data ──────────────────────────────────────────────────────────
 
@@ -724,6 +815,33 @@ export default function DimensionMatrix() {
             )}
           </div>}
 
+          {/* ── Aggregation selector ──────────────────────────────────── */}
+          {configOpen && (
+            <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">
+              <h2 className="text-sm font-medium text-gray-300 mb-2">
+                Aggregate by
+                <span className="ml-2 text-gray-600 font-normal text-xs">
+                  sum/avg/min/max require events with a numeric value field
+                </span>
+              </h2>
+              <div className="flex rounded-md bg-gray-800 p-0.5 w-fit">
+                {(["count", "sum", "avg", "min", "max"] as Aggregation[]).map((agg) => (
+                  <button
+                    key={agg}
+                    onClick={() => setAggregation(agg)}
+                    className={`px-3 py-1 text-xs rounded transition-colors ${
+                      aggregation === agg
+                        ? "bg-gray-700 text-gray-100"
+                        : "text-gray-400 hover:text-gray-300"
+                    }`}
+                  >
+                    {AGGREGATION_LABELS[agg]}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* ── Filters ──────────────────────────────────────────────── */}
           {configOpen && <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">
             <h2 className="text-sm font-medium text-gray-300 mb-2">
@@ -847,25 +965,43 @@ export default function DimensionMatrix() {
                   </span>
                 </h2>
 
-                {/* Chart type picker */}
-                <div className="flex rounded-md bg-gray-800 p-0.5">
-                  {([
-                    ["bar", "Bar chart"],
-                    ["treemap", "Treemap"],
-                    ...(mapAvailable ? [["map", "Map"] as [ChartType, string]] : []),
-                  ] as [ChartType, string][]).map(([type, label]) => (
-                    <button
-                      key={type}
-                      onClick={() => setChartType(type)}
-                      className={`px-2.5 py-0.5 text-xs rounded transition-colors ${
-                        chartType === type
-                          ? "bg-gray-700 text-gray-100"
-                          : "text-gray-400 hover:text-gray-300"
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
+                <div className="flex items-center gap-2">
+                  {/* Sparklines toggle */}
+                  <button
+                    onClick={() => {
+                      const next = !showSparklines;
+                      setShowSparklines(next);
+                    }}
+                    title="Toggle trend sparklines"
+                    className={`px-2.5 py-0.5 text-xs rounded transition-colors border ${
+                      showSparklines
+                        ? "bg-blue-600/20 border-blue-700/50 text-blue-300"
+                        : "bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-300"
+                    }`}
+                  >
+                    {loadingTrend ? "..." : "Trend"}
+                  </button>
+
+                  {/* Chart type picker */}
+                  <div className="flex rounded-md bg-gray-800 p-0.5">
+                    {([
+                      ["bar", "Bar chart"],
+                      ["treemap", "Treemap"],
+                      ...(mapAvailable ? [["map", "Map"] as [ChartType, string]] : []),
+                    ] as [ChartType, string][]).map(([type, label]) => (
+                      <button
+                        key={type}
+                        onClick={() => setChartType(type)}
+                        className={`px-2.5 py-0.5 text-xs rounded transition-colors ${
+                          chartType === type
+                            ? "bg-gray-700 text-gray-100"
+                            : "text-gray-400 hover:text-gray-300"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 
@@ -939,15 +1075,17 @@ export default function DimensionMatrix() {
                       {columns.map((col) => (
                         <th
                           key={col}
-                          onClick={() => handleSort(col)}
-                          className={`pb-2 font-medium cursor-pointer hover:text-gray-200 transition-colors ${
-                            col === "count" ? "text-right" : ""
+                          onClick={col !== "_sparkline" ? () => handleSort(col) : undefined}
+                          className={`pb-2 font-medium transition-colors ${
+                            col === "_sparkline" ? "text-gray-500 text-right" :
+                            col === "count" ? "text-right cursor-pointer hover:text-gray-200" :
+                            "cursor-pointer hover:text-gray-200"
                           } ${
                             sort.column === col ? "text-blue-400" : "text-gray-500"
                           }`}
                         >
-                          {col === "count" ? "Count" : col}
-                          {sort.column === col && (
+                          {col === "_sparkline" ? "Trend" : col === "count" ? aggLabel : col}
+                          {col !== "_sparkline" && sort.column === col && (
                             <span className="ml-1">
                               {sort.direction === "asc" ? "\u2191" : "\u2193"}
                             </span>
@@ -960,11 +1098,18 @@ export default function DimensionMatrix() {
                     {sortedMatrix.map((row, i) => (
                       <tr key={i} className="text-gray-300 hover:bg-gray-800/30">
                         {columns.map((col) => {
+                          if (col === "_sparkline") {
+                            const rowKey = effectiveDims.map((d) => String(row[d] ?? "")).join("\x00");
+                            const sparkData = trendByKey.get(rowKey) ?? [];
+                            return (
+                              <td key="_sparkline" className="py-1.5 text-right">
+                                <Sparkline data={sparkData} />
+                              </td>
+                            );
+                          }
                           const val = col === "count"
                             ? Number(row[col]).toLocaleString()
                             : String(row[col] ?? "");
-                          // Show colour pill for the segment dim (first non-geo dim)
-                          // so table rows visually match the donut colours
                           const showPill = col !== "count" && col === segmentDimForMap && mapAvailable;
                           return (
                             <td

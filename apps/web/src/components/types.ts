@@ -70,6 +70,27 @@ export interface MatrixQueryResponse {
     to: string;
     filters: { key: string; value: string }[];
     limit: number;
+    aggregation: string;
+  };
+}
+
+export interface MatrixTrendRow {
+  [key: string]: string | number;
+  bucket: string;
+  count: number;
+}
+
+export interface MatrixTrendQueryResponse {
+  trend: MatrixTrendRow[];
+  meta: {
+    event_name: string | string[];
+    dimensions: string[];
+    from: string;
+    to: string;
+    granularity: string;
+    filters: { key: string; value: string }[];
+    limit: number;
+    aggregation: string;
   };
 }
 

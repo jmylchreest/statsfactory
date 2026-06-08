@@ -14,7 +14,9 @@ import type {
   DimensionsQueryParams,
   BreakdownQueryParams,
   MatrixQueryParams,
+  MatrixTrendQueryParams,
   Granularity,
+  Aggregation,
   DimensionFilter,
   FilterOperator,
 } from "./schemas";
@@ -164,6 +166,21 @@ function filteredEventIdsSubquery(
   `;
 }
 
+/**
+ * SQL expression for the requested aggregation function.
+ * Non-count aggregations operate on events.value; call sites must add
+ * a `value IS NOT NULL` guard so only metric events are included.
+ */
+function aggregateExpr(aggregation: Aggregation) {
+  switch (aggregation) {
+    case "sum": return sql<number>`SUM(${events.value})`;
+    case "avg": return sql<number>`AVG(${events.value})`;
+    case "min": return sql<number>`MIN(${events.value})`;
+    case "max": return sql<number>`MAX(${events.value})`;
+    default:    return sql<number>`COUNT(*)`;
+  }
+}
+
 // ── Query functions ─────────────────────────────────────────────────────────
 
 export type TimeSeriesBucket = {
@@ -191,15 +208,19 @@ export async function queryEventTimeSeries(
   const bucket = timeBucket(params.granularity);
   const baseWhere = eventsWhere(appId, params);
 
+  const conditions: ReturnType<typeof sql>[] = [];
+  if (filterSql !== null) conditions.push(sql`${events.id} IN (${filterSql})`);
+  if (params.aggregation !== "count") conditions.push(sql`${events.value} IS NOT NULL`);
+
   const where =
-    filterSql !== null
-      ? and(baseWhere, sql`${events.id} IN (${filterSql})`)!
+    conditions.length > 0
+      ? and(baseWhere, ...conditions)!
       : baseWhere;
 
   const rows = await db
     .select({
       bucket,
-      count: sql<number>`count(*)`,
+      count: aggregateExpr(params.aggregation),
     })
     .from(events)
     .where(where)
@@ -327,13 +348,25 @@ export async function queryBreakdown(
   if (filterSql !== null) {
     baseConds.push(sql`e.id IN (${filterSql})`);
   }
+  if (params.aggregation !== "count") {
+    baseConds.push(sql`e.value IS NOT NULL`);
+  }
 
   const whereSql = sql.join(baseConds, sql` AND `);
+
+  // Choose the inner aggregate expression based on aggregation param.
+  // For breakdown, we aggregate e.value (or count rows) per dim_value.
+  const innerAgg = params.aggregation === "count"
+    ? sql`COUNT(*)`
+    : params.aggregation === "sum" ? sql`SUM(e.value)`
+    : params.aggregation === "avg" ? sql`AVG(e.value)`
+    : params.aggregation === "min" ? sql`MIN(e.value)`
+    : sql`MAX(e.value)`;
 
   // UNION ALL: scalar values + exploded array values
   const query = sql`
     SELECT dim_value, SUM(cnt) AS count FROM (
-      SELECT d.dim_value AS dim_value, COUNT(*) AS cnt
+      SELECT d.dim_value AS dim_value, ${innerAgg} AS cnt
       FROM events e
       INNER JOIN event_dimensions d ON d.event_id = e.id
       WHERE ${whereSql} AND d.dim_type != 'array'
@@ -341,7 +374,7 @@ export async function queryBreakdown(
 
       UNION ALL
 
-      SELECT je.value AS dim_value, COUNT(*) AS cnt
+      SELECT je.value AS dim_value, ${innerAgg} AS cnt
       FROM events e
       INNER JOIN event_dimensions d ON d.event_id = e.id,
       json_each(d.dim_value) je
@@ -455,16 +488,14 @@ export async function queryMatrix(
   if (filterSql !== null) {
     conditions.push(sql`e.id IN (${filterSql})`);
   }
+  if (params.aggregation !== "count") {
+    conditions.push(sql`e.value IS NOT NULL`);
+  }
 
-  // For scalar dims, json_each produces NULL — filter those out so scalars
-  // still appear (the CASE handles it, but we also need to handle the case
-  // where json_each produces no rows for scalar dims). We need: for array dims,
-  // je{i}.value IS NOT NULL; for scalar dims, no constraint.
-  // Actually, LEFT JOIN json_each(NULL) produces exactly 1 row with all NULLs,
-  // which is correct — the CASE falls through to dim_value. No extra WHERE needed.
+  const aggExpr = aggregateExpr(params.aggregation);
 
   const query = sql`
-    SELECT ${sql.join([...selectParts, sql`COUNT(*) AS count`], sql`, `)}
+    SELECT ${sql.join([...selectParts, sql`${aggExpr} AS count`], sql`, `)}
     FROM events e
     ${sql.join(joinParts, sql` `)}
     WHERE ${sql.join(conditions, sql` AND `)}
@@ -487,6 +518,106 @@ export async function queryMatrix(
       }
     }
     mapped.count = Number(row.count ?? 0);
+    return mapped;
+  });
+}
+
+export type MatrixTrendRow = Record<string, string | number> & { bucket: string; count: number };
+
+/**
+ * Matrix cross-tabulation bucketed by time — produces per-row sparkline data.
+ *
+ * Same as queryMatrix but adds a `bucket` time dimension to the GROUP BY and
+ * SELECT, returning (dim0, dim1, ..., bucket, count) rows. The caller groups
+ * by dim combination to build per-row trend sparklines.
+ */
+export async function queryMatrixTrend(
+  db: Database,
+  appId: string,
+  params: MatrixTrendQueryParams,
+): Promise<MatrixTrendRow[]> {
+  const filterSql = filteredEventIdsSubquery({
+    from: params.from,
+    to: params.to,
+    eventNames: params.eventNames,
+    filters: params.filters,
+    appId,
+  });
+
+  const hasEventNameDim = params.dimensions.includes("event_name");
+  const realDims = params.dimensions.filter((d) => d !== "event_name");
+
+  const bucket = timeBucket(params.granularity);
+
+  const selectParts: ReturnType<typeof sql>[] = [];
+  if (hasEventNameDim) {
+    selectParts.push(sql`e.event_name AS event_name_dim`);
+  }
+  selectParts.push(
+    ...realDims.map(
+      (_, i) =>
+        sql`CASE WHEN ${sql.raw(`d${i}`)}.dim_type = 'array' THEN ${sql.raw(`je${i}`)}.value ELSE ${sql.raw(`d${i}`)}.dim_value END AS ${sql.raw(`dim${i}`)}`,
+    ),
+  );
+  selectParts.push(sql`${bucket} AS bucket`);
+
+  const joinParts: ReturnType<typeof sql>[] = [];
+  for (let i = 0; i < realDims.length; i++) {
+    const dimKey = realDims[i];
+    joinParts.push(
+      sql`INNER JOIN event_dimensions ${sql.raw(`d${i}`)} ON e.id = ${sql.raw(`d${i}`)}.event_id AND ${sql.raw(`d${i}`)}.dim_key = ${dimKey}`,
+    );
+    joinParts.push(
+      sql`LEFT JOIN json_each(CASE WHEN ${sql.raw(`d${i}`)}.dim_type = 'array' THEN ${sql.raw(`d${i}`)}.dim_value ELSE NULL END) ${sql.raw(`je${i}`)}`,
+    );
+  }
+
+  const groupByParts: ReturnType<typeof sql>[] = [];
+  if (hasEventNameDim) groupByParts.push(sql.raw("e.event_name"));
+  groupByParts.push(...realDims.map((_, i) => sql.raw(`dim${i}`)));
+  groupByParts.push(sql`${bucket}`);
+
+  const conditions = [
+    sql`e.app_id = ${appId}`,
+    sql`e.timestamp >= ${params.from}`,
+    sql`e.timestamp <= ${params.to}`,
+  ];
+
+  if (params.eventNames.length === 1) {
+    conditions.push(sql`e.event_name = ${params.eventNames[0]}`);
+  } else {
+    conditions.push(
+      sql`e.event_name IN (${sql.join(params.eventNames.map((n) => sql`${n}`), sql`, `)})`,
+    );
+  }
+
+  if (filterSql !== null) conditions.push(sql`e.id IN (${filterSql})`);
+  if (params.aggregation !== "count") conditions.push(sql`e.value IS NOT NULL`);
+
+  const aggExpr = aggregateExpr(params.aggregation);
+
+  const query = sql`
+    SELECT ${sql.join([...selectParts, sql`${aggExpr} AS count`], sql`, `)}
+    FROM events e
+    ${sql.join(joinParts, sql` `)}
+    WHERE ${sql.join(conditions, sql` AND `)}
+    GROUP BY ${sql.join(groupByParts, sql`, `)}
+    ORDER BY bucket ASC
+    LIMIT ${params.limit}
+  `;
+
+  const rows = await db.all(query);
+
+  return (rows as Record<string, unknown>[]).map((row) => {
+    const mapped: MatrixTrendRow = { bucket: String(row["bucket"] ?? ""), count: Number(row.count ?? 0) };
+    for (const dim of params.dimensions) {
+      if (dim === "event_name") {
+        mapped["event_name"] = String(row["event_name_dim"] ?? "");
+      } else {
+        const idx = realDims.indexOf(dim);
+        mapped[dim] = String(row[`dim${idx}`] ?? "");
+      }
+    }
     return mapped;
   });
 }

@@ -107,6 +107,7 @@ ingestRouter.openapi(ingestRoute, async (c) => {
     timestamp: string;
     sessionId: string | null;
     distinctId: string | null;
+    value: number | null;
     dims: Record<string, DimValue>;
     indices: number[]; // original batch indices (for error reporting)
   };
@@ -138,6 +139,7 @@ ingestRouter.openapi(ingestRoute, async (c) => {
           timestamp,
           sessionId: ev.session_id ?? null,
           distinctId: ev.distinct_id ?? null,
+          value: ev.value ?? null,
           dims: evDims,
           indices: [index],
         });
@@ -148,6 +150,7 @@ ingestRouter.openapi(ingestRoute, async (c) => {
         timestamp,
         sessionId: ev.session_id ?? null,
         distinctId: ev.distinct_id ?? null,
+        value: ev.value ?? null,
         dims: evDims,
         indices: [index],
       });
@@ -198,6 +201,7 @@ ingestRouter.openapi(ingestRoute, async (c) => {
       timestamp: merged.timestamp,
       sessionId: merged.sessionId,
       distinctId: merged.distinctId,
+      value: merged.value,
       createdAt: now,
     });
 
@@ -213,9 +217,9 @@ ingestRouter.openapi(ingestRoute, async (c) => {
 
   // Batch insert into D1.
   // D1 limits bind parameters to 100 per statement, so we chunk inserts.
-  // Events: 7 columns → max 14 rows/chunk. Dimensions: 4 columns → max 25 rows/chunk.
+  // Events: 8 columns → max 12 rows/chunk. Dimensions: 4 columns → max 25 rows/chunk.
   // D1 free tier limits total statements to 50 per Worker invocation.
-  const EVENT_CHUNK = 14;
+  const EVENT_CHUNK = 12;
   const DIM_CHUNK = 25;
   const MAX_STATEMENTS = 50;
 

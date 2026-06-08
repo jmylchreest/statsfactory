@@ -86,6 +86,7 @@ type event struct {
 	Timestamp  string         `json:"timestamp,omitempty"`
 	SessionID  string         `json:"session_id,omitempty"`
 	DistinctID string         `json:"distinct_id,omitempty"`
+	Value      *float64       `json:"value,omitempty"`
 	Dimensions map[string]any `json:"dimensions,omitempty"`
 }
 
@@ -169,6 +170,11 @@ type TrackOptions struct {
 
 	// DistinctID is an optional identity for the event.
 	DistinctID string
+
+	// Value is an optional numeric value for metric aggregation.
+	// When set, the event can be queried with SUM/AVG/MIN/MAX aggregation.
+	// Nil means count-only (default behaviour unchanged).
+	Value *float64
 }
 
 // TrackWithOptions enqueues an event with additional options.
@@ -197,6 +203,10 @@ func (c *Client) TrackWithOptions(eventName string, dims Dims, opts TrackOptions
 
 	if opts.DistinctID != "" {
 		ev.DistinctID = opts.DistinctID
+	}
+
+	if opts.Value != nil {
+		ev.Value = opts.Value
 	}
 
 	if len(dims) > 0 {
