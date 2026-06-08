@@ -2,7 +2,7 @@
  * Shared utilities and micro-components used across dashboard pages.
  */
 
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
 
 // ── Date range helpers ─────────────────────────────────────────────────────
 
@@ -33,6 +33,26 @@ export function extractError(err: unknown): string {
   return err instanceof Error ? err.message : "Unknown error";
 }
 
+// ── Layout components ──────────────────────────────────────────────────────
+
+/**
+ * Consistent top-of-page filter bar used by all dashboard pages.
+ * Children (AppSelector, DateRangePicker, selects) are laid out in a
+ * horizontal flex row with a subtle card border.
+ */
+export function ControlBar({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-800 bg-gray-900 px-3 py-2">
+      {children}
+    </div>
+  );
+}
+
+/** Thin vertical separator between control groups inside a ControlBar. */
+export function ControlDivider() {
+  return <div className="w-px h-4 bg-gray-700 shrink-0" aria-hidden="true" />;
+}
+
 // ── Micro-components ───────────────────────────────────────────────────────
 
 /** Red error banner, consistent across all dashboard pages. */
@@ -44,12 +64,20 @@ export function ErrorBanner({ message }: { message: string }) {
   );
 }
 
-/** Grey loading indicator text. */
+/** Inline loading indicator with spinner. */
 export function LoadingText({ label = "Loading..." }: { label?: string }) {
-  return <div className="text-sm text-gray-500">{label}</div>;
+  return (
+    <div className="flex items-center gap-2 text-sm text-gray-500 py-1">
+      <svg className="w-3.5 h-3.5 animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
+        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+      </svg>
+      {label}
+    </div>
+  );
 }
 
-/** From/To date range picker used across Overview, EventExplorer, Matrix. */
+/** From/To date range picker. Renders two date inputs suitable for ControlBar. */
 export function DateRangePicker({
   range,
   onChange,
@@ -59,22 +87,22 @@ export function DateRangePicker({
 }) {
   return (
     <>
-      <label className="text-sm text-gray-400">
+      <label className="text-sm text-gray-400 flex items-center gap-1.5">
         From
         <input
           type="date"
           value={range.from}
           onChange={(e) => onChange({ ...range, from: e.target.value })}
-          className="ml-2 rounded-md bg-gray-800 border border-gray-700 px-2 py-1 text-sm text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="rounded-md bg-gray-800 border border-gray-700 px-2 py-1 text-sm text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
         />
       </label>
-      <label className="text-sm text-gray-400">
+      <label className="text-sm text-gray-400 flex items-center gap-1.5">
         To
         <input
           type="date"
           value={range.to}
           onChange={(e) => onChange({ ...range, to: e.target.value })}
-          className="ml-2 rounded-md bg-gray-800 border border-gray-700 px-2 py-1 text-sm text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="rounded-md bg-gray-800 border border-gray-700 px-2 py-1 text-sm text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
         />
       </label>
     </>

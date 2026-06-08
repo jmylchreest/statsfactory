@@ -17,6 +17,8 @@ import {
   ErrorBanner,
   LoadingText,
   DateRangePicker,
+  ControlBar,
+  ControlDivider,
   CHART_TOOLTIP_PROPS,
 } from "./shared";
 import type { EventsQueryResponse, MatrixQueryResponse, MatrixRow } from "./types";
@@ -110,21 +112,26 @@ export default function Overview() {
   }, [fetchGeoMatrix]);
 
   return (
-    <div className="space-y-6">
-      <AppSelector onAppSelected={(id) => setAppId(id)} />
-
-      {/* Controls */}
-      <div className="flex flex-wrap items-center gap-3">
+    <div className="space-y-4">
+      <ControlBar>
+        <AppSelector onAppSelected={(id) => setAppId(id)} />
+        <ControlDivider />
         <DateRangePicker range={range} onChange={setRange} />
-        <select
-          value={granularity}
-          onChange={(e) => setGranularity(e.target.value as Granularity)}
-          className="rounded-md bg-gray-800 border border-gray-700 px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
-        >
-          <option value="day">Daily</option>
-          <option value="hour">Hourly</option>
-        </select>
-      </div>
+        <ControlDivider />
+        <div className="flex rounded-md bg-gray-800 p-0.5">
+          {(["day", "hour"] as Granularity[]).map((g) => (
+            <button
+              key={g}
+              onClick={() => setGranularity(g)}
+              className={`px-2.5 py-0.5 text-xs rounded transition-colors ${
+                granularity === g ? "bg-gray-700 text-gray-100" : "text-gray-400 hover:text-gray-300"
+              }`}
+            >
+              {g === "day" ? "Daily" : "Hourly"}
+            </button>
+          ))}
+        </div>
+      </ControlBar>
 
       {/* Loading / error states */}
       {loading && <LoadingText />}
@@ -193,44 +200,46 @@ export default function Overview() {
       )}
 
       {/* Top events table */}
-      {data && data.top_events.length > 0 && (
-        <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">
-          <h2 className="text-sm font-medium text-gray-300 mb-3">Top Events</h2>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-800 text-left text-gray-500">
-                <th className="pb-2 font-medium">Event</th>
-                <th className="pb-2 font-medium text-right">Count</th>
-                <th className="pb-2 font-medium text-right w-48">Share</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-800/50">
-              {data.top_events.map((ev) => {
-                const maxCount = data.top_events[0]?.count ?? 1;
-                const pct = maxCount > 0 ? (ev.count / maxCount) * 100 : 0;
-                return (
-                  <tr key={ev.eventName} className="text-gray-300">
-                    <td className="py-2 font-mono text-xs">{ev.eventName}</td>
-                    <td className="py-2 text-right tabular-nums">
-                      {ev.count.toLocaleString()}
-                    </td>
-                    <td className="py-2 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <div className="h-1.5 w-32 rounded-full bg-gray-800 overflow-hidden">
-                          <div
-                            className="h-full rounded-full bg-blue-500"
-                            style={{ width: `${pct}%` }}
-                          />
+      {data && data.top_events.length > 0 && (() => {
+        const totalCount = data.top_events.reduce((s, e) => s + e.count, 0);
+        const maxCount = data.top_events[0]?.count ?? 1;
+        return (
+          <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">
+            <h2 className="text-sm font-medium text-gray-300 mb-3">Top Events</h2>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-800 text-left text-gray-500">
+                  <th className="pb-2 font-medium">Event</th>
+                  <th className="pb-2 font-medium text-right">Count</th>
+                  <th className="pb-2 font-medium text-right">Share</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-800/50">
+                {data.top_events.map((ev) => {
+                  const barPct = maxCount > 0 ? (ev.count / maxCount) * 100 : 0;
+                  const sharePct = totalCount > 0 ? (ev.count / totalCount) * 100 : 0;
+                  return (
+                    <tr key={ev.eventName} className="text-gray-300">
+                      <td className="py-2 font-mono text-xs">{ev.eventName}</td>
+                      <td className="py-2 text-right tabular-nums">{ev.count.toLocaleString()}</td>
+                      <td className="py-2">
+                        <div className="flex items-center justify-end gap-2">
+                          <span className="text-xs text-gray-500 tabular-nums w-10 text-right">
+                            {sharePct.toFixed(1)}%
+                          </span>
+                          <div className="h-1.5 w-24 rounded-full bg-gray-800 overflow-hidden">
+                            <div className="h-full rounded-full bg-blue-500" style={{ width: `${barPct}%` }} />
+                          </div>
                         </div>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        );
+      })()}
     </div>
   );
 }

@@ -17,6 +17,8 @@ import {
   ErrorBanner,
   LoadingText,
   DateRangePicker,
+  ControlBar,
+  ControlDivider,
   CHART_TOOLTIP_PROPS,
 } from "./shared";
 import type {
@@ -136,26 +138,26 @@ export default function EventExplorer() {
   }, [fetchBreakdown]);
 
   return (
-    <div className="space-y-6">
-      <AppSelector onAppSelected={(id) => setAppId(id)} />
-
-      {/* Controls */}
-      <div className="flex flex-wrap items-center gap-3">
+    <div className="space-y-4">
+      <ControlBar>
+        <AppSelector onAppSelected={(id) => setAppId(id)} />
+        <ControlDivider />
         <DateRangePicker range={range} onChange={setRange} />
         {eventNames.length > 0 && (
-          <select
-            value={selectedEvent ?? ""}
-            onChange={(e) => setSelectedEvent(e.target.value)}
-            className="rounded-md bg-gray-800 border border-gray-700 px-2 py-1.5 text-sm text-gray-100 font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
-          >
-            {eventNames.map((name) => (
-              <option key={name} value={name}>
-                {name}
-              </option>
-            ))}
-          </select>
+          <>
+            <ControlDivider />
+            <select
+              value={selectedEvent ?? ""}
+              onChange={(e) => setSelectedEvent(e.target.value)}
+              className="rounded-md bg-gray-800 border border-gray-700 px-2 py-1 text-sm text-gray-100 font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
+            >
+              {eventNames.map((name) => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
+          </>
         )}
-      </div>
+      </ControlBar>
 
       {error && <ErrorBanner message={error} />}
 
@@ -231,10 +233,10 @@ export default function EventExplorer() {
                 </h2>
 
                 {/* Horizontal bar chart */}
-                <ResponsiveContainer width="100%" height={Math.max(200, breakdown.length * 32)}>
+                <ResponsiveContainer width="100%" height={Math.max(200, breakdown.length * 28)}>
                   <BarChart
                     data={breakdown.map((r) => ({
-                      value: r.value.length > 30 ? r.value.slice(0, 27) + "..." : r.value,
+                      value: r.value.length > 42 ? r.value.slice(0, 39) + "…" : r.value,
                       count: r.count,
                     }))}
                     layout="vertical"
@@ -254,34 +256,13 @@ export default function EventExplorer() {
                       tick={{ fill: "#9CA3AF", fontSize: 11 }}
                       tickLine={false}
                       axisLine={false}
-                      width={140}
+                      width={170}
                     />
                     <Tooltip {...CHART_TOOLTIP_PROPS} />
                     <Bar dataKey="count" fill="#3B82F6" radius={[0, 2, 2, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
 
-                {/* Table below the chart */}
-                <table className="w-full text-sm mt-4">
-                  <thead>
-                    <tr className="border-b border-gray-800 text-left text-gray-500">
-                      <th className="pb-2 font-medium">Value</th>
-                      <th className="pb-2 font-medium text-right">Count</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-800/50">
-                    {breakdown.map((row) => (
-                      <tr key={row.value} className="text-gray-300">
-                        <td className="py-1.5 font-mono text-xs">
-                          {row.value}
-                        </td>
-                        <td className="py-1.5 text-right tabular-nums">
-                          {row.count.toLocaleString()}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
               </>
             )}
           </div>

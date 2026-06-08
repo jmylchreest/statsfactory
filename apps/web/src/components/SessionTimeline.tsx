@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { queryApi, getSelectedAppId } from "./api-client";
 import { dimColorHex } from "./dim-color";
 import AppSelector from "./AppSelector";
+import { ControlBar, ControlDivider } from "./shared";
 import type {
   SessionsQueryResponse,
   SessionSummary,
@@ -171,7 +172,9 @@ export default function SessionTimeline() {
 
   return (
     <div className="space-y-4">
-      <AppSelector onAppSelected={handleAppSelected} />
+      <ControlBar>
+        <AppSelector onAppSelected={handleAppSelected} />
+      </ControlBar>
 
       {error && (
         <div className="rounded-lg border border-red-800/50 bg-red-900/20 px-4 py-3 text-sm text-red-300">
@@ -231,44 +234,30 @@ export default function SessionTimeline() {
 
                   <span className="text-gray-700">|</span>
 
-                  <div className="flex items-center gap-1">
-                    <div className="flex rounded-md bg-gray-800 p-0.5">
-                      {LIMIT_PRESETS.map((n) => (
-                        <button
-                          key={n}
-                          onClick={() => setLimit(n)}
-                          className={`px-1.5 py-0.5 text-xs rounded transition-colors tabular-nums ${
-                            limit === n
-                              ? "bg-gray-700 text-gray-100"
-                              : "text-gray-400 hover:text-gray-300"
-                          }`}
-                        >
-                          {n}
-                        </button>
-                      ))}
+                  <div className="flex rounded-md bg-gray-800 p-0.5">
+                    {LIMIT_PRESETS.map((n) => (
                       <button
-                        onClick={() => setLimit(ALL_LIMIT)}
-                        className={`px-1.5 py-0.5 text-xs rounded transition-colors ${
-                          limit === ALL_LIMIT
+                        key={n}
+                        onClick={() => setLimit(n)}
+                        className={`px-1.5 py-0.5 text-xs rounded transition-colors tabular-nums ${
+                          limit === n
                             ? "bg-gray-700 text-gray-100"
                             : "text-gray-400 hover:text-gray-300"
                         }`}
                       >
-                        All
+                        {n}
                       </button>
-                    </div>
-                    <input
-                      type="number"
-                      min={1}
-                      max={ALL_LIMIT}
-                      value={limit === ALL_LIMIT ? "" : limit}
-                      placeholder="n"
-                      onChange={(e) => {
-                        const v = parseInt(e.target.value, 10);
-                        if (!isNaN(v) && v >= 1) setLimit(Math.min(v, ALL_LIMIT));
-                      }}
-                      className="w-12 bg-gray-800 border border-gray-700 text-gray-300 text-xs rounded px-1.5 py-0.5 text-center tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                    />
+                    ))}
+                    <button
+                      onClick={() => setLimit(ALL_LIMIT)}
+                      className={`px-1.5 py-0.5 text-xs rounded transition-colors ${
+                        limit === ALL_LIMIT
+                          ? "bg-gray-700 text-gray-100"
+                          : "text-gray-400 hover:text-gray-300"
+                      }`}
+                    >
+                      All
+                    </button>
                   </div>
                 </div>
               </div>

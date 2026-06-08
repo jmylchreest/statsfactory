@@ -27,38 +27,31 @@ type NewKeyResult = {
   name: string;
 };
 
+type AppTab = "settings" | "keys" | "integration" | "danger";
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
+    year: "numeric", month: "short", day: "numeric",
   });
 }
 
-/** Copy text to clipboard, returns a promise. */
 function copyToClipboard(text: string): Promise<void> {
   return navigator.clipboard.writeText(text);
 }
 
-// ── Sub-components ──────────────────────────────────────────────────────────
+// ── CopyKeyButton ────────────────────────────────────────────────────────────
 
-/** Inline copy button for an API key. */
 function CopyKeyButton({ value }: { value: string }) {
   const [copied, setCopied] = useState(false);
-
-  function handleCopy() {
-    navigator.clipboard.writeText(value).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  }
-
   return (
     <button
       type="button"
-      onClick={handleCopy}
+      onClick={() => navigator.clipboard.writeText(value).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      })}
       className="ml-2 shrink-0 text-xs text-gray-500 hover:text-gray-300 transition-colors"
       title="Copy to clipboard"
     >
@@ -67,14 +60,9 @@ function CopyKeyButton({ value }: { value: string }) {
   );
 }
 
-/** Form to create a new API key for an app. */
-function CreateKeyForm({
-  appId,
-  onCreated,
-}: {
-  appId: string;
-  onCreated: (result: NewKeyResult) => void;
-}) {
+// ── CreateKeyForm ────────────────────────────────────────────────────────────
+
+function CreateKeyForm({ appId, onCreated }: { appId: string; onCreated: (result: NewKeyResult) => void }) {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -85,9 +73,7 @@ function CreateKeyForm({
     setBusy(true);
     setError(null);
     try {
-      const res = await mutateApi<NewKeyResult>("POST", `/v1/apps/${appId}/keys`, {
-        name: name.trim(),
-      });
+      const res = await mutateApi<NewKeyResult>("POST", `/v1/apps/${appId}/keys`, { name: name.trim() });
       onCreated(res);
       setName("");
     } catch (err) {
@@ -114,63 +100,45 @@ function CreateKeyForm({
         disabled={busy || !name.trim()}
         className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
       >
-        {busy ? "Creating..." : "Create Key"}
+        {busy ? "Creating…" : "Create Key"}
       </button>
       {error && <p className="text-xs text-red-400">{error}</p>}
     </form>
   );
 }
 
-/** Key list for a single app: shows keys, revoke buttons, and create form. */
-function AppKeyManager({ appId }: { appId: string }) {
-  const [keys, setKeys] = useState<AppKey[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+// ── AppKeyManager ────────────────────────────────────────────────────────────
+
+function AppKeyManager({
+  appId, keys, loading, error, onRefresh,
+}: {
+  appId: string;
+  keys: AppKey[];
+  loading: boolean;
+  error: string | null;
+  onRefresh: () => void;
+}) {
   const [revoking, setRevoking] = useState<string | null>(null);
-
-  const loadKeys = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await queryApi<{ keys: AppKey[] }>(`/v1/apps/${appId}/keys`);
-      setKeys(res.keys);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load keys");
-    } finally {
-      setLoading(false);
-    }
-  }, [appId]);
-
-  useEffect(() => {
-    loadKeys();
-  }, [loadKeys]);
+  const [revokeError, setRevokeError] = useState<string | null>(null);
 
   async function handleRevoke(keyId: string) {
     setRevoking(keyId);
+    setRevokeError(null);
     try {
       await mutateApi("POST", `/v1/apps/${appId}/keys/${keyId}/revoke`);
-      await loadKeys();
+      onRefresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to revoke key");
+      setRevokeError(err instanceof Error ? err.message : "Failed to revoke key");
     } finally {
       setRevoking(null);
     }
   }
 
-  function handleKeyCreated(_result: NewKeyResult) {
-    loadKeys();
-  }
-
-  if (loading) {
-    return <p className="text-sm text-gray-500">Loading keys...</p>;
-  }
+  if (loading) return <p className="text-sm text-gray-500">Loading keys…</p>;
 
   return (
     <div className="space-y-3">
-      {error && (
-        <p className="text-xs text-red-400">{error}</p>
-      )}
-
+      {(error || revokeError) && <p className="text-xs text-red-400">{error ?? revokeError}</p>}
       {keys.length === 0 ? (
         <p className="text-sm text-gray-500">No keys yet.</p>
       ) : (
@@ -190,19 +158,15 @@ function AppKeyManager({ appId }: { appId: string }) {
                 <td className="py-1.5 text-gray-200">{k.name}</td>
                 <td className="py-1.5">
                   <span className="inline-flex items-center">
-                    <code className="text-gray-400 text-xs select-all">
-                      {k.rawKey ?? `${k.keyPrefix}...`}
-                    </code>
+                    <code className="text-gray-400 text-xs select-all">{k.rawKey ?? `${k.keyPrefix}…`}</code>
                     {k.rawKey && <CopyKeyButton value={k.rawKey} />}
                   </span>
                 </td>
                 <td className="py-1.5 text-gray-400">{formatDate(k.createdAt)}</td>
                 <td className="py-1.5">
-                  {k.revokedAt ? (
-                    <span className="text-xs text-red-400">Revoked {formatDate(k.revokedAt)}</span>
-                  ) : (
-                    <span className="text-xs text-green-400">Active</span>
-                  )}
+                  {k.revokedAt
+                    ? <span className="text-xs text-red-400">Revoked {formatDate(k.revokedAt)}</span>
+                    : <span className="text-xs text-green-400">Active</span>}
                 </td>
                 <td className="py-1.5 text-right">
                   {!k.revokedAt && (
@@ -212,7 +176,7 @@ function AppKeyManager({ appId }: { appId: string }) {
                       disabled={revoking === k.id}
                       className="text-xs text-red-400 hover:text-red-300 disabled:opacity-50 transition-colors"
                     >
-                      {revoking === k.id ? "Revoking..." : "Revoke"}
+                      {revoking === k.id ? "Revoking…" : "Revoke"}
                     </button>
                   )}
                 </td>
@@ -221,16 +185,13 @@ function AppKeyManager({ appId }: { appId: string }) {
           </tbody>
         </table>
       )}
-
-      <CreateKeyForm appId={appId} onCreated={handleKeyCreated} />
+      <CreateKeyForm appId={appId} onCreated={onRefresh} />
     </div>
   );
 }
 
-/**
- * All enriched dimensions that can be toggled on/off per app.
- * Grouped by category for the UI. Every dim the system can produce is listed.
- */
+// ── Enriched dimension groups ────────────────────────────────────────────────
+
 const ENRICHED_DIM_GROUPS = [
   {
     label: "Geo",
@@ -274,20 +235,13 @@ const ENRICHED_DIM_GROUPS = [
   },
   {
     label: "Shared",
-    dims: [
-      { key: "client.os", desc: "OS (from browser or SDK UA)" },
-    ],
+    dims: [{ key: "client.os", desc: "OS (from browser or SDK UA)" }],
   },
 ] as const;
 
-/** Inline settings editor for a single app (PATCH). */
-function AppSettings({
-  app,
-  onUpdated,
-}: {
-  app: App;
-  onUpdated: (updated: App) => void;
-}) {
+// ── AppSettings ──────────────────────────────────────────────────────────────
+
+function AppSettings({ app, onUpdated }: { app: App; onUpdated: (updated: App) => void }) {
   const [name, setName] = useState(app.name);
   const [retentionDays, setRetentionDays] = useState(String(app.retentionDays));
   const [enabledDims, setEnabledDims] = useState<Set<string>>(new Set(app.enabledDims));
@@ -295,27 +249,14 @@ function AppSettings({
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
-  // Detect whether any field has changed from the original
   const origEnabled = new Set(app.enabledDims);
-  const dimsChanged =
-    enabledDims.size !== origEnabled.size ||
-    [...enabledDims].some((d) => !origEnabled.has(d));
-
-  const hasChanges =
-    name !== app.name ||
-    retentionDays !== String(app.retentionDays) ||
-    dimsChanged;
-
-  const enabledCount = enabledDims.size;
+  const dimsChanged = enabledDims.size !== origEnabled.size || [...enabledDims].some((d) => !origEnabled.has(d));
+  const hasChanges = name !== app.name || retentionDays !== String(app.retentionDays) || dimsChanged;
 
   function toggleDim(key: string) {
     setEnabledDims((prev) => {
       const next = new Set(prev);
-      if (next.has(key)) {
-        next.delete(key);
-      } else {
-        next.add(key);
-      }
+      next.has(key) ? next.delete(key) : next.add(key);
       return next;
     });
   }
@@ -324,21 +265,14 @@ function AppSettings({
     setBusy(true);
     setError(null);
     setSaved(false);
-
     const body: Record<string, unknown> = {};
     if (name !== app.name) body.name = name;
-    if (retentionDays !== String(app.retentionDays)) {
-      body.retention_days = parseInt(retentionDays, 10);
-    }
+    if (retentionDays !== String(app.retentionDays)) body.retention_days = parseInt(retentionDays, 10);
     if (dimsChanged) body.enabled_dims = [...enabledDims];
-
     try {
-      const res = await mutateApi<{
-        id: string;
-        name: string;
-        retentionDays: number;
-        enabledDims: string[];
-      }>("PATCH", `/v1/apps/${app.id}`, body);
+      const res = await mutateApi<{ id: string; name: string; retentionDays: number; enabledDims: string[] }>(
+        "PATCH", `/v1/apps/${app.id}`, body,
+      );
       onUpdated({ ...app, ...res });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -354,47 +288,22 @@ function AppSettings({
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <label className="space-y-1">
           <span className="text-xs text-gray-400">Name</span>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="block w-full rounded-md bg-gray-800 border border-gray-700 px-3 py-1.5 text-sm text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
-          />
+          <input type="text" value={name} onChange={(e) => setName(e.target.value)}
+            className="block w-full rounded-md bg-gray-800 border border-gray-700 px-3 py-1.5 text-sm text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500" />
         </label>
         <label className="space-y-1">
           <span className="text-xs text-gray-400">Retention (days)</span>
-          <input
-            type="number"
-            value={retentionDays}
-            onChange={(e) => setRetentionDays(e.target.value)}
-            min={1}
-            max={365}
-            className="block w-full rounded-md bg-gray-800 border border-gray-700 px-3 py-1.5 text-sm text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
-          />
+          <input type="number" value={retentionDays} onChange={(e) => setRetentionDays(e.target.value)}
+            min={1} max={365}
+            className="block w-full rounded-md bg-gray-800 border border-gray-700 px-3 py-1.5 text-sm text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500" />
         </label>
       </div>
 
-      {/* Enrichment dimension toggles */}
-      <div className="space-y-3">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <p className="text-xs text-gray-400">Enrichment Dimensions</p>
-            <p className="text-xs text-gray-600 mt-0.5">
-              Toggle which server-side dimensions are stored per event.
-            </p>
-          </div>
-          <span className="shrink-0 text-xs text-gray-500 tabular-nums">
-            {enabledCount} enabled
-          </span>
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <p className="text-xs text-gray-400">Enrichment Dimensions</p>
+          <span className="text-xs text-gray-500">{enabledDims.size} enabled · each adds 1 row/event</span>
         </div>
-
-        {/* Cost banner */}
-        <div className="rounded-md border border-amber-800/40 bg-amber-950/20 px-3 py-2">
-          <p className="text-xs text-amber-400/90">
-            The more dimensions you enable, the more rows are written per event, consuming free tier usage quicker.
-          </p>
-        </div>
-
         {ENRICHED_DIM_GROUPS.map((group) => (
           <div key={group.label} className="flex flex-wrap items-center gap-2">
             <span className="text-xs text-gray-500 w-16 shrink-0">{group.label}</span>
@@ -427,7 +336,7 @@ function AppSettings({
           disabled={busy || !hasChanges}
           className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
-          {busy ? "Saving..." : "Save Settings"}
+          {busy ? "Saving…" : "Save Settings"}
         </button>
         {saved && <span className="text-xs text-green-400">Saved</span>}
         {error && <span className="text-xs text-red-400">{error}</span>}
@@ -436,31 +345,19 @@ function AppSettings({
   );
 }
 
-/** Shows a cURL / fetch integration example with the first active API key. */
-function IntegrationSnippet({ appId }: { appId: string }) {
-  const [keys, setKeys] = useState<AppKey[]>([]);
-  const [loading, setLoading] = useState(true);
+// ── IntegrationSnippet ───────────────────────────────────────────────────────
+
+function IntegrationSnippet({ keys }: { keys: AppKey[] }) {
+  const [tab, setTab] = useState<"curl" | "fetch">("curl");
   const [copied, setCopied] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await queryApi<{ keys: AppKey[] }>(`/v1/apps/${appId}/keys`);
-        if (!cancelled) setKeys(res.keys);
-      } catch {
-        // ignore — keys section handles errors
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [appId]);
-
   const activeKey = keys.find((k) => !k.revokedAt);
-  const keyPlaceholder = activeKey?.rawKey ?? activeKey?.keyPrefix ? `${activeKey.keyPrefix}...` : "YOUR_API_KEY";
-  const keyValue = activeKey?.rawKey ?? keyPlaceholder;
+  const keyValue = activeKey?.rawKey ?? (activeKey ? `${activeKey.keyPrefix}…` : "YOUR_API_KEY");
   const baseUrl = typeof window !== "undefined" ? window.location.origin : "https://your-worker.workers.dev";
+
+  if (!activeKey) {
+    return <p className="text-xs text-gray-500">Create an API key in the Keys tab to see integration examples.</p>;
+  }
 
   const curlSnippet = `curl -X POST ${baseUrl}/v1/events \\
   -H "Content-Type: application/json" \\
@@ -468,10 +365,7 @@ function IntegrationSnippet({ appId }: { appId: string }) {
   -d '{
     "events": [{
       "event": "page_view",
-      "dimensions": {
-        "page.path": "/home",
-        "page.title": "Home"
-      },
+      "dimensions": { "page.path": "/home" },
       "session_id": "optional-session-id"
     }]
   }'`;
@@ -485,55 +379,28 @@ function IntegrationSnippet({ appId }: { appId: string }) {
   body: JSON.stringify({
     events: [{
       event: "page_view",
-      dimensions: {
-        "page.path": "/home",
-        "page.title": "Home",
-      },
+      dimensions: { "page.path": "/home" },
       session_id: "optional-session-id",
     }],
   }),
 });`;
 
-  const [tab, setTab] = useState<"curl" | "fetch">("curl");
   const snippet = tab === "curl" ? curlSnippet : fetchSnippet;
-
-  function handleCopy() {
-    copyToClipboard(snippet).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  }
-
-  if (loading) return null;
-  if (!activeKey) {
-    return (
-      <p className="text-xs text-gray-500">
-        Create an API key above to see integration examples.
-      </p>
-    );
-  }
 
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
         <div className="flex rounded-md bg-gray-800 p-0.5">
           {(["curl", "fetch"] as const).map((t) => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={`px-2.5 py-0.5 text-xs rounded transition-colors ${
-                tab === t
-                  ? "bg-gray-700 text-gray-100"
-                  : "text-gray-400 hover:text-gray-300"
-              }`}
-            >
+            <button key={t} onClick={() => setTab(t)}
+              className={`px-2.5 py-0.5 text-xs rounded transition-colors ${tab === t ? "bg-gray-700 text-gray-100" : "text-gray-400 hover:text-gray-300"}`}>
               {t}
             </button>
           ))}
         </div>
         <button
           type="button"
-          onClick={handleCopy}
+          onClick={() => copyToClipboard(snippet).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); })}
           className="ml-auto text-xs text-gray-500 hover:text-gray-300 transition-colors"
         >
           {copied ? "Copied!" : "Copy"}
@@ -543,24 +410,15 @@ function IntegrationSnippet({ appId }: { appId: string }) {
         {snippet}
       </pre>
       <p className="text-xs text-gray-600">
-        The API key determines which app events are routed to — no app ID needed in the payload.
         See <code className="text-gray-500">/v1/openapi.json</code> for the full API spec.
       </p>
     </div>
   );
 }
 
-/** A single expandable app card with settings, keys, and delete. */
-function AppCard({
-  app,
-  onUpdated,
-  onDeleted,
-}: {
-  app: App;
-  onUpdated: (updated: App) => void;
-  onDeleted: (appId: string) => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
+// ── DangerZone ───────────────────────────────────────────────────────────────
+
+function DangerZone({ app, onDeleted }: { app: App; onDeleted: (appId: string) => void }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -578,109 +436,156 @@ function AppCard({
   }
 
   return (
+    <div className="space-y-3">
+      {!confirmDelete ? (
+        <button
+          type="button"
+          onClick={() => setConfirmDelete(true)}
+          className="rounded-md border border-red-700 px-3 py-1.5 text-sm text-red-400 hover:bg-red-900/30 transition-colors"
+        >
+          Delete App
+        </button>
+      ) : (
+        <div className="rounded-md border border-red-900/50 bg-red-950/20 p-3 space-y-3">
+          <p className="text-sm text-red-300">
+            Permanently delete <strong>{app.name}</strong> and all its data. This cannot be undone.
+          </p>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={handleDelete}
+              disabled={deleting}
+              className="rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-50 transition-colors"
+            >
+              {deleting ? "Deleting…" : "Yes, Delete"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirmDelete(false)}
+              className="text-sm text-gray-400 hover:text-gray-200 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+          {deleteError && <p className="text-xs text-red-400">{deleteError}</p>}
+        </div>
+      )}
+      <p className="text-xs text-gray-600 font-mono">ID: {app.id}</p>
+    </div>
+  );
+}
+
+// ── AppCard ──────────────────────────────────────────────────────────────────
+
+function AppCard({ app, onUpdated, onDeleted }: {
+  app: App;
+  onUpdated: (updated: App) => void;
+  onDeleted: (appId: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [tab, setTab] = useState<AppTab>("settings");
+
+  // Hoist keys fetch so both Keys and Integration tabs share one request
+  const [keys, setKeys] = useState<AppKey[]>([]);
+  const [keysLoading, setKeysLoading] = useState(false);
+  const [keysError, setKeysError] = useState<string | null>(null);
+
+  const loadKeys = useCallback(async () => {
+    setKeysLoading(true);
+    setKeysError(null);
+    try {
+      const res = await queryApi<{ keys: AppKey[] }>(`/v1/apps/${app.id}/keys`);
+      setKeys(res.keys);
+    } catch (err) {
+      setKeysError(err instanceof Error ? err.message : "Failed to load keys");
+    } finally {
+      setKeysLoading(false);
+    }
+  }, [app.id]);
+
+  useEffect(() => {
+    if (expanded) loadKeys();
+  }, [expanded, loadKeys]);
+
+  const TABS: { id: AppTab; label: string; danger?: boolean }[] = [
+    { id: "settings", label: "Settings" },
+    { id: "keys", label: "Keys" },
+    { id: "integration", label: "Integration" },
+    { id: "danger", label: "Danger", danger: true },
+  ];
+
+  return (
     <div className="rounded-lg border border-gray-800 bg-gray-900">
-      {/* Header — always visible */}
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
         className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-gray-800/40 transition-colors rounded-lg"
       >
-        <div>
+        <div className="flex items-baseline gap-3 min-w-0">
           <span className="text-sm font-medium text-gray-100">{app.name}</span>
-          <span className="ml-3 text-xs text-gray-500">
-            {app.retentionDays}d retention &middot;{" "}
-            {formatDate(app.createdAt)}
-          </span>
+          <span className="text-xs text-gray-600 font-mono hidden sm:inline">{app.id.slice(0, 10)}…</span>
+          <span className="text-xs text-gray-500">{app.retentionDays}d · {formatDate(app.createdAt)}</span>
         </div>
-        <span className="text-gray-500 text-xs">{expanded ? "▲" : "▼"}</span>
+        <span className="text-gray-600 text-xs ml-4 shrink-0">{expanded ? "▲" : "▼"}</span>
       </button>
 
-      {/* Expanded body */}
       {expanded && (
-        <div className="border-t border-gray-800 px-4 py-4 space-y-5">
-          {/* Settings */}
-          <section>
-            <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
-              Settings
-            </h3>
-            <AppSettings app={app} onUpdated={onUpdated} />
-          </section>
-
-          {/* Keys */}
-          <section>
-            <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
-              API Keys
-            </h3>
-            <AppKeyManager appId={app.id} />
-          </section>
-
-          {/* Integration */}
-          <section>
-            <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
-              Integration
-            </h3>
-            <IntegrationSnippet appId={app.id} />
-          </section>
-
-          {/* Danger zone */}
-          <section className="rounded-md border border-red-900/50 bg-red-950/20 p-3 space-y-2">
-            <h3 className="text-xs font-semibold text-red-400 uppercase tracking-wider">
-              Danger Zone
-            </h3>
-            {!confirmDelete ? (
+        <div className="border-t border-gray-800">
+          {/* Tab bar */}
+          <div className="flex border-b border-gray-800 px-4">
+            {TABS.map((t) => (
               <button
-                type="button"
-                onClick={() => setConfirmDelete(true)}
-                className="rounded-md border border-red-700 px-3 py-1.5 text-sm text-red-400 hover:bg-red-900/30 transition-colors"
+                key={t.id}
+                onClick={() => setTab(t.id)}
+                className={`px-3 py-2 text-xs transition-colors border-b-2 -mb-px ${
+                  tab === t.id
+                    ? t.danger
+                      ? "border-red-500 text-red-400"
+                      : "border-blue-500 text-blue-400"
+                    : t.danger
+                    ? "border-transparent text-gray-600 hover:text-red-400 ml-auto"
+                    : "border-transparent text-gray-500 hover:text-gray-300"
+                } ${t.danger && tab !== t.id ? "ml-auto" : ""}`}
               >
-                Delete App
+                {t.label}
               </button>
-            ) : (
-              <div className="flex items-center gap-3">
-                <p className="text-sm text-red-300">
-                  This will permanently delete <strong>{app.name}</strong> and all
-                  its data. Are you sure?
-                </p>
-                <button
-                  type="button"
-                  onClick={handleDelete}
-                  disabled={deleting}
-                  className="shrink-0 rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-50 transition-colors"
-                >
-                  {deleting ? "Deleting..." : "Yes, Delete"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setConfirmDelete(false)}
-                  className="text-sm text-gray-400 hover:text-gray-200 transition-colors"
-                >
-                  Cancel
-                </button>
-              </div>
-            )}
-            {deleteError && (
-              <p className="text-xs text-red-400">{deleteError}</p>
-            )}
-          </section>
+            ))}
+          </div>
 
-          {/* ID for reference */}
-          <p className="text-xs text-gray-600">
-            ID: <code className="text-gray-500">{app.id}</code>
-          </p>
+          {/* Tab content */}
+          <div className="px-4 py-4">
+            {tab === "settings" && (
+              <AppSettings app={app} onUpdated={onUpdated} />
+            )}
+            {tab === "keys" && (
+              <AppKeyManager
+                appId={app.id}
+                keys={keys}
+                loading={keysLoading}
+                error={keysError}
+                onRefresh={loadKeys}
+              />
+            )}
+            {tab === "integration" && (
+              <IntegrationSnippet keys={keys} />
+            )}
+            {tab === "danger" && (
+              <DangerZone app={app} onDeleted={onDeleted} />
+            )}
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-// ── Main component ──────────────────────────────────────────────────────────
+// ── AppManager (main) ────────────────────────────────────────────────────────
 
 export default function AppManager() {
   const [apps, setApps] = useState<App[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Create form state
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
   const [newRetention, setNewRetention] = useState("90");
@@ -691,8 +596,7 @@ export default function AppManager() {
     setLoading(true);
     setError(null);
     try {
-      const result = await fetchApps();
-      setApps(result);
+      setApps(await fetchApps());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load apps");
     } finally {
@@ -700,9 +604,7 @@ export default function AppManager() {
     }
   }, []);
 
-  useEffect(() => {
-    loadApps();
-  }, [loadApps]);
+  useEffect(() => { loadApps(); }, [loadApps]);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -725,22 +627,10 @@ export default function AppManager() {
     }
   }
 
-  function handleAppUpdated(updated: App) {
-    setApps((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
-  }
-
-  function handleAppDeleted(appId: string) {
-    setApps((prev) => prev.filter((a) => a.id !== appId));
-    // If the deleted app was the selected one, clear the selection
-    clearSelectedAppId();
-  }
-
-  // ── Render ──────────────────────────────────────────────────────────────
-
   if (loading) {
     return (
       <div className="rounded-lg border border-gray-800 bg-gray-900 p-8 text-center text-sm text-gray-500">
-        Loading apps...
+        Loading apps…
       </div>
     );
   }
@@ -755,11 +645,8 @@ export default function AppManager() {
 
   return (
     <div className="space-y-4">
-      {/* Header + create button */}
       <div className="flex items-center justify-between">
-        <p className="text-sm text-gray-400">
-          {apps.length} app{apps.length !== 1 ? "s" : ""}
-        </p>
+        <p className="text-sm text-gray-400">{apps.length} app{apps.length !== 1 ? "s" : ""}</p>
         <button
           type="button"
           onClick={() => setShowCreate(!showCreate)}
@@ -769,53 +656,33 @@ export default function AppManager() {
         </button>
       </div>
 
-      {/* Create app form */}
       {showCreate && (
-        <form
-          onSubmit={handleCreate}
-          className="rounded-lg border border-gray-800 bg-gray-900 p-4 space-y-3"
-        >
+        <form onSubmit={handleCreate} className="rounded-lg border border-gray-800 bg-gray-900 p-4 space-y-3">
           <h3 className="text-sm font-medium text-gray-200">Create App</h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="space-y-1">
               <span className="text-xs text-gray-400">App Name</span>
-              <input
-                type="text"
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                placeholder="My App"
-                className="block w-full rounded-md bg-gray-800 border border-gray-700 px-3 py-1.5 text-sm text-gray-100 placeholder:text-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                autoFocus
-              />
+              <input type="text" value={newName} onChange={(e) => setNewName(e.target.value)}
+                placeholder="My App" autoFocus
+                className="block w-full rounded-md bg-gray-800 border border-gray-700 px-3 py-1.5 text-sm text-gray-100 placeholder:text-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500" />
             </label>
             <label className="space-y-1">
               <span className="text-xs text-gray-400">Retention (days)</span>
-              <input
-                type="number"
-                value={newRetention}
-                onChange={(e) => setNewRetention(e.target.value)}
-                min={1}
-                max={365}
-                className="block w-full rounded-md bg-gray-800 border border-gray-700 px-3 py-1.5 text-sm text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              />
+              <input type="number" value={newRetention} onChange={(e) => setNewRetention(e.target.value)}
+                min={1} max={365}
+                className="block w-full rounded-md bg-gray-800 border border-gray-700 px-3 py-1.5 text-sm text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500" />
             </label>
           </div>
           <div className="flex items-center gap-3">
-            <button
-              type="submit"
-              disabled={creating || !newName.trim()}
-              className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              {creating ? "Creating..." : "Create"}
+            <button type="submit" disabled={creating || !newName.trim()}
+              className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+              {creating ? "Creating…" : "Create"}
             </button>
-            {createError && (
-              <span className="text-xs text-red-400">{createError}</span>
-            )}
+            {createError && <span className="text-xs text-red-400">{createError}</span>}
           </div>
         </form>
       )}
 
-      {/* App list */}
       {apps.length === 0 ? (
         <div className="rounded-lg border border-gray-800 bg-gray-900 p-8 text-center text-sm text-gray-500">
           No apps yet. Click "New App" to get started.
@@ -826,8 +693,8 @@ export default function AppManager() {
             <AppCard
               key={app.id}
               app={app}
-              onUpdated={handleAppUpdated}
-              onDeleted={handleAppDeleted}
+              onUpdated={(updated) => setApps((prev) => prev.map((a) => (a.id === updated.id ? updated : a)))}
+              onDeleted={(appId) => { setApps((prev) => prev.filter((a) => a.id !== appId)); clearSelectedAppId(); }}
             />
           ))}
         </div>

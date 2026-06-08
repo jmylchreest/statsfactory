@@ -19,6 +19,8 @@ import {
   ErrorBanner,
   LoadingText,
   DateRangePicker,
+  ControlBar,
+  ControlDivider,
   CHART_TOOLTIP_PROPS,
 } from "./shared";
 import type {
@@ -32,181 +34,20 @@ import type {
   DimensionKey,
 } from "./types";
 
-// Lazy-load the map component only in the browser (maplibre-gl is client-only WebGL).
-// Using a function body prevents Vite/Rollup from tracing the import during SSR.
 const DonutClusterMap = lazy(() => import("./DonutClusterMap"));
 
 type SortConfig = { column: string; direction: "asc" | "desc" };
+type Aggregation = "count" | "sum" | "avg" | "min" | "max";
+type ChartType = "bar" | "treemap" | "map";
+
+const AGGREGATION_LABELS: Record<Aggregation, string> = {
+  count: "Count", sum: "Sum", avg: "Avg", min: "Min", max: "Max",
+};
 
 const CHART_COLORS = [
   "#3b82f6", "#22c55e", "#eab308", "#a855f7", "#ec4899",
   "#06b6d4", "#f97316", "#10b981", "#6366f1", "#f43e5e",
 ];
-
-// ── FilterCombobox ──────────────────────────────────────────────────────────
-
-function FilterCombobox({
-  appId,
-  eventName,
-  dimKey,
-  from,
-  to,
-  onSelect,
-  onCancel,
-}: {
-  appId: string;
-  eventName: string;
-  dimKey: string;
-  from: string;
-  to: string;
-  onSelect: (value: string) => void;
-  onCancel: () => void;
-}) {
-  const [values, setValues] = useState<{ value: string; count: number }[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await queryApi<BreakdownQueryResponse>(
-          "/v1/query/breakdown",
-          { app_id: appId, event_name: eventName, dim_key: dimKey, from, to, limit: "200" },
-        );
-        if (!cancelled) setValues(res.breakdown);
-      } catch {
-        if (!cancelled) setValues([]);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [appId, eventName, dimKey, from, to]);
-
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
-
-  // Close on outside click
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        onCancel();
-      }
-    }
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [onCancel]);
-
-  const filtered = search
-    ? values.filter((v) => v.value.toLowerCase().includes(search.toLowerCase()))
-    : values;
-
-  function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === "Escape") {
-      onCancel();
-    } else if (e.key === "Enter") {
-      if (filtered.length === 1) {
-        onSelect(filtered[0].value);
-      } else if (search.trim()) {
-        onSelect(search.trim());
-      }
-    }
-  }
-
-  return (
-    <div ref={containerRef} className="relative">
-      <input
-        ref={inputRef}
-        type="text"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        onKeyDown={handleKeyDown}
-        placeholder={`Search ${dimKey} values...`}
-        className="w-full bg-gray-800 border border-gray-700 text-gray-300 text-xs rounded px-2.5 py-1.5 placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
-      />
-      <div className="absolute z-20 mt-1 w-full max-h-48 overflow-y-auto rounded border border-gray-700 bg-gray-800 shadow-lg">
-        {loading && (
-          <div className="px-3 py-2 text-xs text-gray-500">Loading values...</div>
-        )}
-        {!loading && filtered.length === 0 && (
-          <div className="px-3 py-2 text-xs text-gray-500">
-            {search.trim() ? (
-              <button
-                onClick={() => onSelect(search.trim())}
-                className="text-blue-400 hover:text-blue-300"
-              >
-                Use &ldquo;{search.trim()}&rdquo;
-              </button>
-            ) : (
-              "No values found"
-            )}
-          </div>
-        )}
-        {!loading &&
-          filtered.map((v) => (
-            <button
-              key={v.value}
-              onClick={() => onSelect(v.value)}
-              className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-700 transition-colors flex items-center justify-between"
-            >
-              <span className="font-mono text-gray-200 truncate">{v.value}</span>
-              <span className="text-gray-500 tabular-nums shrink-0 ml-2">
-                {v.count.toLocaleString()}
-              </span>
-            </button>
-          ))}
-      </div>
-    </div>
-  );
-}
-
-// ── Treemap custom content ──────────────────────────────────────────────────
-
-function TreemapContent(props: {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  name: string;
-  value: number;
-  index: number;
-}) {
-  const { x, y, width, height, name, value, index } = props;
-  if (width < 4 || height < 4) return null;
-  const fill = CHART_COLORS[index % CHART_COLORS.length];
-  return (
-    <g>
-      <rect x={x} y={y} width={width} height={height} fill={fill} stroke="#1f2937" strokeWidth={2} rx={4} opacity={0.85} />
-      {width > 50 && height > 30 && (
-        <>
-          <text x={x + 6} y={y + 16} fill="#f3f4f6" fontSize={11} fontWeight={500}>
-            {name.length > Math.floor(width / 7) ? name.slice(0, Math.floor(width / 7)) + "\u2026" : name}
-          </text>
-          <text x={x + 6} y={y + 30} fill="#9ca3af" fontSize={10}>
-            {value.toLocaleString()}
-          </text>
-        </>
-      )}
-    </g>
-  );
-}
-
-// ── Main component ──────────────────────────────────────────────────────────
-
-type ChartType = "bar" | "treemap" | "map";
-type Aggregation = "count" | "sum" | "avg" | "min" | "max";
-
-const AGGREGATION_LABELS: Record<Aggregation, string> = {
-  count: "Count",
-  sum: "Sum",
-  avg: "Avg",
-  min: "Min",
-  max: "Max",
-};
 
 // ── Sparkline ───────────────────────────────────────────────────────────────
 
@@ -225,67 +66,220 @@ function Sparkline({ data }: { data: { count: number }[] }) {
     .join(" ");
   return (
     <svg width={W} height={H} className="overflow-visible">
-      <polyline
-        points={points}
-        fill="none"
-        stroke="#3b82f6"
-        strokeWidth={1.5}
-        strokeLinejoin="round"
-        strokeLinecap="round"
-      />
+      <polyline points={points} fill="none" stroke="#3b82f6" strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" />
     </svg>
   );
 }
+
+// ── TreemapContent ──────────────────────────────────────────────────────────
+
+function TreemapContent(props: { x: number; y: number; width: number; height: number; name: string; value: number; index: number }) {
+  const { x, y, width, height, name, value, index } = props;
+  if (width < 4 || height < 4) return null;
+  const fill = CHART_COLORS[index % CHART_COLORS.length];
+  return (
+    <g>
+      <rect x={x} y={y} width={width} height={height} fill={fill} stroke="#1f2937" strokeWidth={2} rx={4} opacity={0.85} />
+      {width > 50 && height > 30 && (
+        <>
+          <text x={x + 6} y={y + 16} fill="#f3f4f6" fontSize={11} fontWeight={500}>
+            {name.length > Math.floor(width / 7) ? name.slice(0, Math.floor(width / 7)) + "…" : name}
+          </text>
+          <text x={x + 6} y={y + 30} fill="#9ca3af" fontSize={10}>{value.toLocaleString()}</text>
+        </>
+      )}
+    </g>
+  );
+}
+
+// ── FilterCombobox ──────────────────────────────────────────────────────────
+
+function FilterCombobox({
+  appId, eventName, dimKey, from, to, onSelect, onCancel,
+}: {
+  appId: string; eventName: string; dimKey: string; from: string; to: string;
+  onSelect: (value: string) => void; onCancel: () => void;
+}) {
+  const [values, setValues] = useState<{ value: string; count: number }[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await queryApi<BreakdownQueryResponse>("/v1/query/breakdown", {
+          app_id: appId, event_name: eventName, dim_key: dimKey, from, to, limit: "200",
+        });
+        if (!cancelled) setValues(res.breakdown);
+      } catch {
+        if (!cancelled) setValues([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [appId, eventName, dimKey, from, to]);
+
+  useEffect(() => { inputRef.current?.focus(); }, []);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) onCancel();
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [onCancel]);
+
+  const filtered = search ? values.filter((v) => v.value.toLowerCase().includes(search.toLowerCase())) : values;
+
+  return (
+    <div ref={containerRef} className="relative w-56">
+      <input
+        ref={inputRef}
+        type="text"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") onCancel();
+          else if (e.key === "Enter") {
+            if (filtered.length === 1) onSelect(filtered[0].value);
+            else if (search.trim()) onSelect(search.trim());
+          }
+        }}
+        placeholder={`Search ${dimKey}…`}
+        className="w-full bg-gray-800 border border-gray-700 text-gray-300 text-xs rounded px-2.5 py-1.5 placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
+      />
+      <div className="absolute z-20 mt-1 w-full max-h-48 overflow-y-auto rounded border border-gray-700 bg-gray-800 shadow-lg">
+        {loading && <div className="px-3 py-2 text-xs text-gray-500">Loading…</div>}
+        {!loading && filtered.length === 0 && (
+          <div className="px-3 py-2 text-xs text-gray-500">
+            {search.trim()
+              ? <button onClick={() => onSelect(search.trim())} className="text-blue-400 hover:text-blue-300">Use &ldquo;{search.trim()}&rdquo;</button>
+              : "No values found"}
+          </div>
+        )}
+        {!loading && filtered.map((v) => (
+          <button key={v.value} onClick={() => onSelect(v.value)}
+            className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-700 transition-colors flex items-center justify-between">
+            <span className="font-mono text-gray-200 truncate">{v.value}</span>
+            <span className="text-gray-500 tabular-nums shrink-0 ml-2">{v.count.toLocaleString()}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── DimPicker ───────────────────────────────────────────────────────────────
+
+function DimPicker({ available, onAdd }: { available: DimensionKey[]; onAdd: (key: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    inputRef.current?.focus();
+    function handler(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const filtered = search
+    ? available.filter((d) => d.dimKey.toLowerCase().includes(search.toLowerCase()))
+    : available;
+
+  if (available.length === 0) return null;
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(!open)}
+        className="rounded-full px-2.5 py-0.5 text-xs border border-dashed border-gray-700 text-gray-500 hover:border-gray-500 hover:text-gray-400 transition-colors"
+      >
+        + Add
+      </button>
+      {open && (
+        <div className="absolute top-full mt-1 left-0 w-60 rounded-lg border border-gray-700 bg-gray-900 shadow-xl z-30">
+          <div className="p-1.5 border-b border-gray-800">
+            <input
+              ref={inputRef}
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => e.key === "Escape" && setOpen(false)}
+              placeholder="Search dimensions…"
+              className="w-full bg-gray-800 text-xs text-gray-300 px-2.5 py-1 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder-gray-600"
+            />
+          </div>
+          <div className="max-h-56 overflow-y-auto py-1">
+            {filtered.length === 0 && (
+              <p className="px-3 py-2 text-xs text-gray-600">No dimensions found.</p>
+            )}
+            {filtered.map((d) => {
+              const isVirtual = d.dimKey === "event_name";
+              return (
+                <button
+                  key={d.dimKey}
+                  onClick={() => { onAdd(d.dimKey); setOpen(false); setSearch(""); }}
+                  className={`w-full text-left px-3 py-1.5 text-xs font-mono flex items-center justify-between hover:bg-gray-800 transition-colors ${
+                    isVirtual ? "text-purple-300" : "text-gray-300"
+                  }`}
+                >
+                  <span>{d.dimKey}</span>
+                  <span className="text-gray-600 font-sans ml-2">{d.distinctValues}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Main component ──────────────────────────────────────────────────────────
 
 export default function DimensionMatrix() {
   const [appId, setAppId] = useState<string | null>(getSelectedAppId());
   const [range, setRange] = useState(() => defaultRange(30));
 
-  // Step 1: event list
   const [eventNames, setEventNames] = useState<string[]>([]);
   const [selectedEvents, setSelectedEvents] = useState<string[]>([]);
   const [loadingEvents, setLoadingEvents] = useState(false);
 
-  // Step 2: available dimensions
   const [availableDims, setAvailableDims] = useState<DimensionKey[]>([]);
   const [selectedDims, setSelectedDims] = useState<string[]>([]);
   const [loadingDims, setLoadingDims] = useState(false);
 
-  // Drag state for reordering selected dims
   const [dragIdx, setDragIdx] = useState<number | null>(null);
 
-  // Dimension picker sort order
-  const [dimSort, setDimSort] = useState<"count-desc" | "count-asc" | "alpha-asc" | "alpha-desc">("count-desc");
-
-  // Filters
   const [filters, setFilters] = useState<{ key: string; value: string }[]>([]);
   const [filterKey, setFilterKey] = useState("");
   const [showCombobox, setShowCombobox] = useState(false);
 
-  // Step 3: matrix results
-  const [matrix, setMatrix] = useState<MatrixRow[]>([]);
-  const [loadingMatrix, setLoadingMatrix] = useState(false);
-  const [sort, setSort] = useState<SortConfig>({ column: "count", direction: "desc" });
-
-  // Aggregation
   const [aggregation, setAggregation] = useState<Aggregation>("count");
 
-  // Chart
+  const [matrix, setMatrix] = useState<MatrixRow[]>([]);
+  const [loadingMatrix, setLoadingMatrix] = useState(false);
+  const [sort, setSort] = useState<SortConfig>({ column: "__agg", direction: "desc" });
+
   const [chartType, setChartType] = useState<ChartType>("bar");
 
-  // Sparklines
   const [showSparklines, setShowSparklines] = useState(false);
   const [trendData, setTrendData] = useState<MatrixTrendRow[]>([]);
   const [loadingTrend, setLoadingTrend] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
 
-  // Config panel collapsed state — auto-collapse when we have results
-  const [configOpen, setConfigOpen] = useState(true);
-
   const { isoFrom, isoTo } = toISORange(range);
 
-  // Version counters to prevent stale async responses from overwriting fresh state.
   const eventsVersion = useRef(0);
   const dimsVersion = useRef(0);
   const matrixVersion = useRef(0);
@@ -300,17 +294,12 @@ export default function DimensionMatrix() {
     setError(null);
     try {
       const res = await queryApi<EventsQueryResponse>("/v1/query/events", {
-        app_id: appId,
-        from: isoFrom,
-        to: isoTo,
-        granularity: "day",
+        app_id: appId, from: isoFrom, to: isoTo, granularity: "day",
       });
       if (version !== eventsVersion.current) return;
       const names = res.top_events.map((e) => e.eventName);
       setEventNames(names);
-      if (names.length > 0 && selectedEvents.length === 0) {
-        setSelectedEvents([names[0]]);
-      }
+      if (names.length > 0 && selectedEvents.length === 0) setSelectedEvents([names[0]]);
     } catch (err) {
       if (version !== eventsVersion.current) return;
       setError(extractError(err));
@@ -325,15 +314,9 @@ export default function DimensionMatrix() {
     setLoadingDims(true);
     setError(null);
     try {
-      const res = await queryApi<DimensionsQueryResponse>(
-        "/v1/query/dimensions",
-        {
-          app_id: appId,
-          event_name: selectedEvents,
-          from: isoFrom,
-          to: isoTo,
-        },
-      );
+      const res = await queryApi<DimensionsQueryResponse>("/v1/query/dimensions", {
+        app_id: appId, event_name: selectedEvents, from: isoFrom, to: isoTo,
+      });
       if (version !== dimsVersion.current) return;
       setAvailableDims(res.dimensions);
       setSelectedDims([]);
@@ -347,8 +330,6 @@ export default function DimensionMatrix() {
     }
   }, [appId, selectedEvents, isoFrom, isoTo]);
 
-  // Always need at least 2 dimensions for cross-tabulation.
-  // event_name counts as a dimension when selected.
   const minDims = 2;
 
   const fetchMatrix = useCallback(async () => {
@@ -369,14 +350,12 @@ export default function DimensionMatrix() {
         to: isoTo,
         aggregation,
       };
-      if (filters.length > 0) {
-        params.filter = filters.map((f) => `${f.key}:eq:${f.value}`);
-      }
+      if (filters.length > 0) params.filter = filters.map((f) => `${f.key}:eq:${f.value}`);
       const res = await queryApi<MatrixQueryResponse>("/v1/query/matrix", params);
       if (version !== matrixVersion.current) return;
       setMatrix(res.matrix);
       setTrendData([]);
-      setSort({ column: "count", direction: "desc" });
+      setSort({ column: "__agg", direction: "desc" });
     } catch (err) {
       if (version !== matrixVersion.current) return;
       setError(extractError(err));
@@ -399,9 +378,7 @@ export default function DimensionMatrix() {
         granularity: "day",
         aggregation,
       };
-      if (filters.length > 0) {
-        params.filter = filters.map((f) => `${f.key}:eq:${f.value}`);
-      }
+      if (filters.length > 0) params.filter = filters.map((f) => `${f.key}:eq:${f.value}`);
       const res = await queryApi<MatrixTrendQueryResponse>("/v1/query/matrix-trend", params);
       if (version !== trendVersion.current) return;
       setTrendData(res.trend);
@@ -416,7 +393,9 @@ export default function DimensionMatrix() {
   useEffect(() => { fetchEvents(); }, [fetchEvents]);
   useEffect(() => { fetchDimensions(); }, [fetchDimensions]);
   useEffect(() => { fetchMatrix(); }, [fetchMatrix]);
-  useEffect(() => { if (showSparklines && matrix.length > 0) fetchTrend(); }, [showSparklines, fetchTrend, matrix.length]);
+  useEffect(() => {
+    if (showSparklines && matrix.length > 0) fetchTrend();
+  }, [showSparklines, fetchTrend, matrix.length]);
 
   // ── Handlers ────────────────────────────────────────────────────────────
 
@@ -434,11 +413,11 @@ export default function DimensionMatrix() {
 
   function addFilter(key: string, value: string) {
     if (!key || !value) return;
-    if (filters.some((f) => f.key === key)) {
-      setFilters((prev) => prev.map((f) => (f.key === key ? { key, value } : f)));
-    } else {
-      setFilters((prev) => [...prev, { key, value }]);
-    }
+    setFilters((prev) =>
+      prev.some((f) => f.key === key)
+        ? prev.map((f) => (f.key === key ? { key, value } : f))
+        : [...prev, { key, value }],
+    );
     setFilterKey("");
     setShowCombobox(false);
   }
@@ -447,33 +426,25 @@ export default function DimensionMatrix() {
     setFilters((prev) => prev.filter((f) => f.key !== key));
   }
 
-  // Dims available as filter targets: must be selected for cross-tab AND not already filtered
-  const filterableDims = availableDims.filter(
-    (d) => selectedDims.includes(d.dimKey) && !filters.some((f) => f.key === d.dimKey),
-  );
-
-  // When multiple events are selected, inject a virtual "event_name" dimension
-  // so users can optionally group by event type (and drag it to control pivot order)
+  // Virtual "event_name" dim when multiple events selected
   const displayDims: DimensionKey[] = (() => {
     if (selectedEvents.length <= 1) return availableDims;
-    const hasEventName = availableDims.some((d) => d.dimKey === "event_name");
-    if (hasEventName) return availableDims;
+    if (availableDims.some((d) => d.dimKey === "event_name")) return availableDims;
     return [
-      {
-        dimKey: "event_name",
-        distinctValues: selectedEvents.length,
-        eventTypes: [...selectedEvents],
-      },
+      { dimKey: "event_name", distinctValues: selectedEvents.length, eventTypes: [...selectedEvents] },
       ...availableDims,
     ];
   })();
 
-  // ── Drag reorder handlers ──────────────────────────────────────────────
+  const unselectedDims = displayDims.filter((d) => !selectedDims.includes(d.dimKey));
 
-  function handleDragStart(idx: number) {
-    setDragIdx(idx);
-  }
+  const filterableDims = availableDims.filter(
+    (d) => selectedDims.includes(d.dimKey) && !filters.some((f) => f.key === d.dimKey),
+  );
 
+  // ── Drag reorder ─────────────────────────────────────────────────────────
+
+  function handleDragStart(idx: number) { setDragIdx(idx); }
   function handleDragOver(e: React.DragEvent, idx: number) {
     e.preventDefault();
     if (dragIdx === null || dragIdx === idx) return;
@@ -485,23 +456,18 @@ export default function DimensionMatrix() {
     });
     setDragIdx(idx);
   }
+  function handleDragEnd() { setDragIdx(null); }
 
-  function handleDragEnd() {
-    setDragIdx(null);
-  }
-
-  // ── Sort ────────────────────────────────────────────────────────────────
+  // ── Sort ─────────────────────────────────────────────────────────────────
 
   const sortedMatrix = [...matrix].sort((a, b) => {
-    const aVal = a[sort.column];
-    const bVal = b[sort.column];
-    const aNum = typeof aVal === "number" ? aVal : String(aVal ?? "");
-    const bNum = typeof bVal === "number" ? bVal : String(bVal ?? "");
-
-    if (typeof aNum === "number" && typeof bNum === "number") {
-      return sort.direction === "asc" ? aNum - bNum : bNum - aNum;
-    }
-    const cmp = String(aNum).localeCompare(String(bNum));
+    const aVal = sort.column === "__agg" ? a.count : a[sort.column];
+    const bVal = sort.column === "__agg" ? b.count : b[sort.column];
+    const aN = typeof aVal === "number" ? aVal : String(aVal ?? "");
+    const bN = typeof bVal === "number" ? bVal : String(bVal ?? "");
+    if (typeof aN === "number" && typeof bN === "number")
+      return sort.direction === "asc" ? aN - bN : bN - aN;
+    const cmp = String(aN).localeCompare(String(bN));
     return sort.direction === "asc" ? cmp : -cmp;
   });
 
@@ -513,13 +479,10 @@ export default function DimensionMatrix() {
     );
   }
 
-  // Columns: selectedDims order is user-controlled (via drag reorder).
-  // event_name is just another dimension when selected.
   const effectiveDims = selectedDims;
   const aggLabel = AGGREGATION_LABELS[aggregation];
-  const columns = [...effectiveDims, "count", ...(showSparklines ? ["_sparkline"] : [])];
+  const columns = [...effectiveDims, "__agg", ...(showSparklines ? ["_sparkline"] : [])];
 
-  // Group trend data by dimension combination key for O(1) sparkline lookup.
   const trendByKey = new Map<string, { bucket: string; count: number }[]>();
   for (const row of trendData) {
     const key = effectiveDims.map((d) => String(row[d] ?? "")).join("\x00");
@@ -528,311 +491,69 @@ export default function DimensionMatrix() {
     trendByKey.set(key, list);
   }
 
-  // ── Chart data ──────────────────────────────────────────────────────────
-
   const chartData = sortedMatrix.slice(0, 50).map((row) => ({
     name: effectiveDims.map((d) => String(row[d] ?? "")).join(" / "),
     count: Number(row.count),
   }));
 
-  // ── Geo map detection ──────────────────────────────────────────────────
-
   const GEO_DIMS = ["geo.country", "geo.city", "geo.latitude", "geo.longitude"];
   const selectedGeoDims = selectedDims.filter((d) => GEO_DIMS.includes(d));
   const selectedNonGeoDims = selectedDims.filter((d) => !GEO_DIMS.includes(d));
-  const hasGeoDim = selectedGeoDims.length > 0;
-  const hasNonGeoDim = selectedNonGeoDims.length > 0;
-  const mapAvailable = hasGeoDim && hasNonGeoDim;
-
-  // Determine which geo dim to use for positioning and which non-geo for segments
-  const geoDimForMap = selectedGeoDims.includes("geo.latitude")
-    ? "geo.latitude"
-    : selectedGeoDims.includes("geo.city")
-      ? "geo.city"
-      : selectedGeoDims.includes("geo.country")
-        ? "geo.country"
-        : selectedGeoDims[0] ?? "";
-  const lngDimForMap = selectedGeoDims.includes("geo.longitude")
-    ? "geo.longitude"
-    : undefined;
+  const mapAvailable = selectedGeoDims.length > 0 && selectedNonGeoDims.length > 0;
+  const geoDimForMap = selectedGeoDims.includes("geo.latitude") ? "geo.latitude"
+    : selectedGeoDims.includes("geo.city") ? "geo.city"
+    : selectedGeoDims.includes("geo.country") ? "geo.country"
+    : selectedGeoDims[0] ?? "";
+  const lngDimForMap = selectedGeoDims.includes("geo.longitude") ? "geo.longitude" : undefined;
   const segmentDimForMap = selectedNonGeoDims[0] ?? "";
 
   // ── Render ──────────────────────────────────────────────────────────────
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-3">
+      {/* ── Top bar ── */}
+      <ControlBar>
         <AppSelector onAppSelected={(id) => setAppId(id)} />
-
-        {/* Controls row */}
+        <ControlDivider />
         <DateRangePicker range={range} onChange={setRange} />
-      </div>
+      </ControlBar>
 
-      {/* Config toggle bar */}
-      {eventNames.length > 0 && (
-        <button
-          onClick={() => setConfigOpen((o) => !o)}
-          className="w-full flex items-center gap-2 text-left px-3 py-2 rounded-lg border border-gray-800 bg-gray-900 hover:bg-gray-800/50 transition-colors"
-        >
-          <svg
-            className={`w-3.5 h-3.5 text-gray-500 transition-transform ${configOpen ? "rotate-90" : ""}`}
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-          </svg>
-          <span className="text-sm text-gray-400">
-            {selectedEvents.length > 0 && (
-              <span className="text-gray-300">{selectedEvents.join(", ")}</span>
-            )}
-            {selectedEvents.length === 0 && "Select events..."}
-            {selectedDims.length > 0 && (
-              <span className="text-gray-500 ml-2">
-                &times; {selectedDims.join(", ")}
-              </span>
-            )}
-            {filters.length > 0 && (
-              <span className="text-yellow-600 ml-2">
-                ({filters.length} filter{filters.length !== 1 ? "s" : ""})
-              </span>
-            )}
-          </span>
-        </button>
-      )}
+      {/* ── Compact query bar ── */}
+      {appId && (
+        <div className="rounded-lg border border-gray-800 bg-gray-900 divide-y divide-gray-800/60">
 
-      {/* Event selector chips */}
-      {eventNames.length > 0 && configOpen && (
-        <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">
-          <h2 className="text-sm font-medium text-gray-300 mb-2">
-            Select event{eventNames.length > 1 ? "s" : ""} to analyse
-            {loadingEvents && (
-              <span className="ml-2 text-gray-600 font-normal">loading...</span>
-            )}
-            {eventNames.length > 1 && (
-              <span className="ml-2 text-xs font-normal">
-                <button
-                  onClick={() => setSelectedEvents([...eventNames])}
-                  className="text-blue-400 hover:text-blue-300 transition-colors"
-                >
-                  all
-                </button>
-                <span className="text-gray-600 mx-1">/</span>
-                <button
-                  onClick={() => setSelectedEvents([])}
-                  className="text-blue-400 hover:text-blue-300 transition-colors"
-                >
-                  none
-                </button>
-              </span>
-            )}
-          </h2>
-          <div className="flex flex-wrap gap-2">
-            {eventNames.map((name) => {
-              const isSelected = selectedEvents.includes(name);
-              return (
+          {/* Row 1: Events + Aggregate */}
+          <div className="px-4 py-2.5 flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-gray-500 w-20 shrink-0">Events</span>
+            <div className="flex flex-wrap gap-1.5 flex-1 min-w-0">
+              {eventNames.map((name) => (
                 <button
                   key={name}
                   onClick={() => toggleEvent(name)}
-                  className={`rounded-full px-3 py-1 text-xs font-mono transition-colors ${
-                    isSelected
+                  className={`rounded-full px-2.5 py-0.5 text-xs font-mono transition-colors ${
+                    selectedEvents.includes(name)
                       ? "bg-blue-600 text-white"
                       : "bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200"
                   }`}
                 >
                   {name}
                 </button>
-              );
-            })}
-          </div>
-          {selectedEvents.length === 0 && (
-            <p className="text-xs text-yellow-500 mt-2">
-              Select at least 1 event to continue.
-            </p>
-          )}
-        </div>
-      )}
-
-      {error && <ErrorBanner message={error} />}
-
-      {loadingEvents && <LoadingText label="Loading events..." />}
-
-      {!loadingEvents && eventNames.length === 0 && appId && (
-        <div className="rounded-lg border border-gray-800 bg-gray-900 p-6 text-center text-sm text-gray-500">
-          No events found for this time range.
-        </div>
-      )}
-
-      {selectedEvents.length > 0 && (
-        <div className="space-y-3">
-          {/* ── Dimension selector chips ──────────────────────────────── */}
-          {configOpen && <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">
-            <div className="flex items-center justify-between mb-2">
-              <h2 className="text-sm font-medium text-gray-300">
-                Select dimensions to cross-tabulate
-                {loadingDims && (
-                  <span className="ml-2 text-gray-600 font-normal">loading...</span>
-                )}
-              </h2>
-              {/* Sort controls */}
-              <select
-                value={dimSort}
-                onChange={(e) => setDimSort(e.target.value as typeof dimSort)}
-                className="rounded-md bg-gray-800 border border-gray-700 px-2 py-1 text-xs text-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              >
-                <option value="count-desc">most events first</option>
-                <option value="count-asc">fewest events first</option>
-                <option value="alpha-asc">A → Z</option>
-                <option value="alpha-desc">Z → A</option>
-              </select>
+              ))}
+              {loadingEvents && <LoadingText label="loading…" />}
+              {!loadingEvents && eventNames.length === 0 && (
+                <span className="text-xs text-gray-600">No events in this range.</span>
+              )}
             </div>
-            {(() => {
-              // Sort displayDims according to selected sort order
-              const sortDims = (dims: DimensionKey[]) => {
-                const sorted = [...dims];
-                switch (dimSort) {
-                  case "count-desc":
-                    return sorted.sort((a, b) => b.distinctValues - a.distinctValues);
-                  case "count-asc":
-                    return sorted.sort((a, b) => a.distinctValues - b.distinctValues);
-                  case "alpha-asc":
-                    return sorted.sort((a, b) => a.dimKey.localeCompare(b.dimKey));
-                  case "alpha-desc":
-                    return sorted.sort((a, b) => b.dimKey.localeCompare(a.dimKey));
-                  default:
-                    return sorted;
-                }
-              };
-
-              // Group dimensions by their event type(s)
-              const groups = new Map<string, DimensionKey[]>();
-              for (const dim of displayDims) {
-                const key = dim.eventTypes.slice().sort().join(", ");
-                const list = groups.get(key) ?? [];
-                list.push(dim);
-                groups.set(key, list);
-              }
-              // Sort groups: shared (multiple events) first, then alphabetically
-              const sortedGroups = [...groups.entries()].sort(([a], [b]) => {
-                const aMulti = a.includes(",") ? 0 : 1;
-                const bMulti = b.includes(",") ? 0 : 1;
-                return aMulti - bMulti || a.localeCompare(b);
-              });
-
-              const renderChip = (dim: DimensionKey) => {
-                const isSelected = selectedDims.includes(dim.dimKey);
-                const isVirtual = dim.dimKey === "event_name";
-                return (
-                  <button
-                    key={dim.dimKey}
-                    onClick={() => toggleDim(dim.dimKey)}
-                    className={`rounded-full px-3 py-1 text-xs font-mono transition-colors ${
-                      isSelected
-                        ? isVirtual
-                          ? "bg-purple-600 text-white"
-                          : "bg-blue-600 text-white"
-                        : isVirtual
-                          ? "bg-purple-900/40 text-purple-300 border border-purple-700/50 hover:bg-purple-800/40 hover:text-purple-200"
-                          : "bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200"
-                    }`}
-                  >
-                    {dim.dimKey}
-                    <span className={`ml-1 font-sans ${isVirtual ? "text-purple-400" : "text-gray-500"}`}>
-                      ({dim.distinctValues})
-                    </span>
-                  </button>
-                );
-              };
-
-              // If only one event or one group, render flat (no group labels)
-              if (sortedGroups.length <= 1) {
-                return (
-                  <div className="flex flex-wrap gap-2">
-                    {sortDims(displayDims).map(renderChip)}
-                  </div>
-                );
-              }
-
-              return (
-                <div className="space-y-3">
-                  {sortedGroups.map(([groupLabel, dims]) => (
-                    <div key={groupLabel}>
-                      <p className="text-xs text-gray-500 mb-1.5 font-sans">
-                        {groupLabel}
-                      </p>
-                      <div className="flex flex-wrap gap-2">
-                        {sortDims(dims).map(renderChip)}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              );
-            })()}
-            {selectedDims.length > 0 && selectedDims.length < minDims && (
-              <p className="text-xs text-yellow-500 mt-2">
-                Select at least {minDims} dimension{minDims > 1 ? "s" : ""} to generate the matrix.
-              </p>
-            )}
-
-            {/* ── Pivot order strip (drag to reorder) ───────────────── */}
-            {selectedDims.length >= 2 && (
-              <div className="mt-3 pt-3 border-t border-gray-800">
-                <p className="text-xs text-gray-500 mb-2 font-sans">
-                  Pivot order <span className="text-gray-600">— drag to reorder</span>
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {selectedDims.map((dimKey, idx) => {
-                    const isVirtual = dimKey === "event_name";
-                    return (
-                      <div
-                        key={dimKey}
-                        draggable
-                        onDragStart={() => handleDragStart(idx)}
-                        onDragOver={(e) => handleDragOver(e, idx)}
-                        onDragEnd={handleDragEnd}
-                        className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-mono cursor-grab active:cursor-grabbing select-none transition-colors ${
-                          dragIdx === idx
-                            ? "ring-1 ring-blue-400 opacity-60"
-                            : ""
-                        } ${
-                          isVirtual
-                            ? "bg-purple-600/30 text-purple-200 border border-purple-700/50"
-                            : "bg-blue-600/30 text-blue-200 border border-blue-700/50"
-                        }`}
-                      >
-                        <span className="text-gray-500 cursor-grab" title="Drag to reorder">
-                          &#x2630;
-                        </span>
-                        <span className="text-gray-500 font-sans text-[10px] tabular-nums w-3 text-center">
-                          {idx + 1}
-                        </span>
-                        {dimKey}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </div>}
-
-          {/* ── Aggregation selector ──────────────────────────────────── */}
-          {configOpen && (
-            <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">
-              <h2 className="text-sm font-medium text-gray-300 mb-2">
-                Aggregate by
-                <span className="ml-2 text-gray-600 font-normal text-xs">
-                  sum/avg/min/max require events with a numeric value field
-                </span>
-              </h2>
-              <div className="flex rounded-md bg-gray-800 p-0.5 w-fit">
+            {/* Aggregate inline */}
+            <div className="flex items-center gap-1.5 shrink-0">
+              <span className="text-xs text-gray-600">aggregate</span>
+              <div className="flex rounded bg-gray-800 p-0.5">
                 {(["count", "sum", "avg", "min", "max"] as Aggregation[]).map((agg) => (
                   <button
                     key={agg}
                     onClick={() => setAggregation(agg)}
-                    className={`px-3 py-1 text-xs rounded transition-colors ${
-                      aggregation === agg
-                        ? "bg-gray-700 text-gray-100"
-                        : "text-gray-400 hover:text-gray-300"
+                    className={`px-2 py-0.5 text-xs rounded transition-colors ${
+                      aggregation === agg ? "bg-gray-700 text-gray-100" : "text-gray-500 hover:text-gray-300"
                     }`}
                   >
                     {AGGREGATION_LABELS[agg]}
@@ -840,307 +561,251 @@ export default function DimensionMatrix() {
                 ))}
               </div>
             </div>
+          </div>
+
+          {/* Row 2: Breakdown (only when events selected) */}
+          {selectedEvents.length > 0 && (
+            <div className="px-4 py-2.5 flex items-center gap-2 flex-wrap">
+              <span className="text-xs text-gray-500 w-20 shrink-0">Breakdown</span>
+              <div className="flex flex-wrap gap-1.5 flex-1">
+                {selectedDims.map((dimKey, idx) => {
+                  const isVirtual = dimKey === "event_name";
+                  return (
+                    <div
+                      key={dimKey}
+                      draggable
+                      onDragStart={() => handleDragStart(idx)}
+                      onDragOver={(e) => handleDragOver(e, idx)}
+                      onDragEnd={handleDragEnd}
+                      className={`flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-mono cursor-grab active:cursor-grabbing select-none transition-colors ${
+                        dragIdx === idx ? "opacity-60 ring-1 ring-blue-400" : ""
+                      } ${
+                        isVirtual
+                          ? "bg-purple-600/30 text-purple-200 border border-purple-700/50"
+                          : "bg-blue-600/30 text-blue-200 border border-blue-700/50"
+                      }`}
+                    >
+                      <span className="text-gray-500 text-[10px]">⠿</span>
+                      {dimKey}
+                      <button
+                        onClick={() => toggleDim(dimKey)}
+                        className="ml-0.5 opacity-60 hover:opacity-100 transition-opacity"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  );
+                })}
+                <DimPicker available={unselectedDims} onAdd={(k) => toggleDim(k)} />
+                {loadingDims && <LoadingText label="loading…" />}
+              </div>
+              {selectedDims.length === 1 && (
+                <span className="text-xs text-yellow-600 shrink-0">need 2+</span>
+              )}
+            </div>
           )}
 
-          {/* ── Filters ──────────────────────────────────────────────── */}
-          {configOpen && <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">
-            <h2 className="text-sm font-medium text-gray-300 mb-2">
-              Filters
-              <span className="ml-2 text-gray-600 font-normal text-xs">
-                narrow results before cross-tabulation
-              </span>
-            </h2>
-
-            {/* Active filters */}
-            {filters.length > 0 && (
-              <div className="flex flex-wrap gap-2 mb-3">
+          {/* Row 3: Filters (when enough dims or filters already active) */}
+          {selectedEvents.length > 0 && (selectedDims.length >= 2 || filters.length > 0) && (
+            <div className="px-4 py-2.5 flex items-center gap-2 flex-wrap">
+              <span className="text-xs text-gray-500 w-20 shrink-0">Filters</span>
+              <div className="flex flex-wrap items-center gap-1.5 flex-1">
                 {filters.map((f) => (
                   <span
                     key={f.key}
-                    className="inline-flex items-center gap-1.5 rounded-full bg-yellow-600/20 text-yellow-300 border border-yellow-800/50 px-3 py-1 text-xs font-mono"
+                    className="inline-flex items-center gap-1 rounded-full bg-yellow-600/20 text-yellow-300 border border-yellow-800/50 px-2.5 py-0.5 text-xs font-mono"
                   >
                     {f.key}={f.value}
-                    <button
-                      onClick={() => removeFilter(f.key)}
-                      className="hover:text-yellow-100 transition-colors"
-                      aria-label={`Remove ${f.key} filter`}
-                    >
-                      &times;
-                    </button>
+                    <button onClick={() => removeFilter(f.key)} className="opacity-60 hover:opacity-100 ml-0.5">×</button>
                   </span>
                 ))}
-              </div>
-            )}
-
-            {/* Add filter */}
-            {filterableDims.length === 0 && filters.length === 0 && (
-              <p className="text-xs text-gray-500">
-                Select dimensions above to use them as filters.
-              </p>
-            )}
-
-            {filterableDims.length > 0 && (
-              <div className="flex items-start gap-2">
-                <div className="flex items-center gap-2 shrink-0">
+                {filterableDims.length > 0 && !showCombobox && (
                   <select
                     value={filterKey}
                     onChange={(e) => {
                       setFilterKey(e.target.value);
                       setShowCombobox(!!e.target.value);
                     }}
-                    className="rounded-md bg-gray-800 border border-gray-700 px-2 py-1.5 text-xs text-gray-100 font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    className="rounded bg-gray-800 border border-dashed border-gray-700 px-2 py-0.5 text-xs text-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   >
-                    <option value="">dimension...</option>
-                    {filterableDims.map((dim) => (
-                      <option key={dim.dimKey} value={dim.dimKey}>
-                        {dim.dimKey} ({dim.distinctValues})
-                      </option>
+                    <option value="">+ Filter</option>
+                    {filterableDims.map((d) => (
+                      <option key={d.dimKey} value={d.dimKey}>{d.dimKey}</option>
                     ))}
                   </select>
-                  <span className="text-gray-600 text-xs">=</span>
-                </div>
-
-                {showCombobox && filterKey && appId && selectedEvents.length > 0 ? (
-                  <div className="w-64">
-                    <FilterCombobox
-                      appId={appId}
-                      eventName={selectedEvents[0]}
-                      dimKey={filterKey}
-                      from={isoFrom}
-                      to={isoTo}
-                      onSelect={(value) => addFilter(filterKey, value)}
-                      onCancel={() => {
-                        setFilterKey("");
-                        setShowCombobox(false);
-                      }}
-                    />
-                  </div>
-                ) : (
-                  <span className="text-xs text-gray-500 py-1.5">select a dimension</span>
                 )}
-              </div>
-            )}
-          </div>}
-
-          {/* ── Matrix results ────────────────────────────────────────── */}
-          {loadingMatrix && (
-            <LoadingText label="Loading matrix..." />
-          )}
-
-          {selectedDims.length >= minDims && !loadingMatrix && matrix.length === 0 && (() => {
-            // Detect cross-event-type dimension selection:
-            // If no single event type contains all selected dims, explain why results are empty.
-            const selectedDimMetas = availableDims.filter((d) => selectedDims.includes(d.dimKey));
-            const allEventTypes = new Set(selectedDimMetas.flatMap((d) => d.eventTypes));
-            const sharedEventType = [...allEventTypes].some((et) =>
-              selectedDimMetas.every((d) => d.eventTypes.includes(et)),
-            );
-            return (
-              <div className="rounded-lg border border-gray-800 bg-gray-900 p-6 text-center text-sm text-gray-500">
-                {!sharedEventType ? (
-                  <>
-                    <p className="mb-2">No results — the selected dimensions come from different event types.</p>
-                    <p className="text-xs text-gray-600">
-                      Cross-tabulation requires dimensions that co-occur on the same event.
-                      Try selecting dimensions that belong to a common event type.
-                    </p>
-                  </>
-                ) : (
-                  "No results for this combination."
-                )}
-              </div>
-            );
-          })()}
-
-          {sortedMatrix.length > 0 && (
-            <div className="rounded-lg border border-gray-800 bg-gray-900 p-4 space-y-4">
-              {/* Header row */}
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <h2 className="text-sm font-medium text-gray-300">
-                  Matrix: {effectiveDims.map((d) => (
-                    <code key={d} className="text-blue-300 text-xs mx-0.5">{d}</code>
-                  ))}
-                  <span className="text-gray-500 ml-2 font-normal text-xs">
-                    ({sortedMatrix.length} row{sortedMatrix.length !== 1 ? "s" : ""})
-                  </span>
-                </h2>
-
-                <div className="flex items-center gap-2">
-                  {/* Sparklines toggle */}
-                  <button
-                    onClick={() => {
-                      const next = !showSparklines;
-                      setShowSparklines(next);
-                    }}
-                    title="Toggle trend sparklines"
-                    className={`px-2.5 py-0.5 text-xs rounded transition-colors border ${
-                      showSparklines
-                        ? "bg-blue-600/20 border-blue-700/50 text-blue-300"
-                        : "bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-300"
-                    }`}
-                  >
-                    {loadingTrend ? "..." : "Trend"}
-                  </button>
-
-                  {/* Chart type picker */}
-                  <div className="flex rounded-md bg-gray-800 p-0.5">
-                    {([
-                      ["bar", "Bar chart"],
-                      ["treemap", "Treemap"],
-                      ...(mapAvailable ? [["map", "Map"] as [ChartType, string]] : []),
-                    ] as [ChartType, string][]).map(([type, label]) => (
-                      <button
-                        key={type}
-                        onClick={() => setChartType(type)}
-                        className={`px-2.5 py-0.5 text-xs rounded transition-colors ${
-                          chartType === type
-                            ? "bg-gray-700 text-gray-100"
-                            : "text-gray-400 hover:text-gray-300"
-                        }`}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* ── Bar chart ──────────────────────────────────────────── */}
-              {chartType === "bar" && chartData.length > 0 && (
-                <div style={{ height: Math.max(300, chartData.length * 28 + 40) }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={chartData} layout="vertical" margin={{ left: 10, right: 20, top: 5, bottom: 5 }}>
-                      <XAxis type="number" tick={{ fill: "#9ca3af", fontSize: 11 }} axisLine={{ stroke: "#374151" }} tickLine={false} />
-                      <YAxis
-                        type="category"
-                        dataKey="name"
-                        width={180}
-                        tick={{ fill: "#d1d5db", fontSize: 11 }}
-                        axisLine={false}
-                        tickLine={false}
-                      />
-                      <Tooltip {...CHART_TOOLTIP_PROPS} />
-                      <Bar dataKey="count" radius={[0, 4, 4, 0]}>
-                        {chartData.map((_, i) => (
-                          <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
-
-              {/* ── Treemap ────────────────────────────────────────────── */}
-              {chartType === "treemap" && chartData.length > 0 && (
-                <div style={{ height: 400 }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <Treemap
-                      data={chartData}
-                      dataKey="count"
-                      nameKey="name"
-                      isAnimationActive={false}
-                      content={<TreemapContent x={0} y={0} width={0} height={0} name="" value={0} index={0} />}
-                    />
-                  </ResponsiveContainer>
-                </div>
-              )}
-
-              {/* ── Map ────────────────────────────────────────────────── */}
-              {chartType === "map" && mapAvailable && (
-                <Suspense
-                  fallback={
-                    <div
-                      style={{ height: 450 }}
-                      className="flex items-center justify-center rounded-lg bg-gray-800/50"
-                    >
-                      <span className="text-sm text-gray-500">Loading map...</span>
-                    </div>
-                  }
-                >
-                  <DonutClusterMap
-                    matrixData={sortedMatrix}
-                    geoDim={geoDimForMap}
-                    segmentDim={segmentDimForMap}
-                    lngDim={lngDimForMap}
-                    height={450}
+                {showCombobox && filterKey && appId && selectedEvents.length > 0 && (
+                  <FilterCombobox
+                    appId={appId}
+                    eventName={selectedEvents[0]}
+                    dimKey={filterKey}
+                    from={isoFrom}
+                    to={isoTo}
+                    onSelect={(value) => addFilter(filterKey, value)}
+                    onCancel={() => { setFilterKey(""); setShowCombobox(false); }}
                   />
-                </Suspense>
-              )}
-
-              {/* ── Table ──────────────────────────────────────────────── */}
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-gray-800 text-left">
-                      {columns.map((col) => (
-                        <th
-                          key={col}
-                          onClick={col !== "_sparkline" ? () => handleSort(col) : undefined}
-                          className={`pb-2 font-medium transition-colors ${
-                            col === "_sparkline" ? "text-gray-500 text-right" :
-                            col === "count" ? "text-right cursor-pointer hover:text-gray-200" :
-                            "cursor-pointer hover:text-gray-200"
-                          } ${
-                            sort.column === col ? "text-blue-400" : "text-gray-500"
-                          }`}
-                        >
-                          {col === "_sparkline" ? "Trend" : col === "count" ? aggLabel : col}
-                          {col !== "_sparkline" && sort.column === col && (
-                            <span className="ml-1">
-                              {sort.direction === "asc" ? "\u2191" : "\u2193"}
-                            </span>
-                          )}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-800/50">
-                    {sortedMatrix.map((row, i) => (
-                      <tr key={i} className="text-gray-300 hover:bg-gray-800/30">
-                        {columns.map((col) => {
-                          if (col === "_sparkline") {
-                            const rowKey = effectiveDims.map((d) => String(row[d] ?? "")).join("\x00");
-                            const sparkData = trendByKey.get(rowKey) ?? [];
-                            return (
-                              <td key="_sparkline" className="py-1.5 text-right">
-                                <Sparkline data={sparkData} />
-                              </td>
-                            );
-                          }
-                          const val = col === "count"
-                            ? Number(row[col]).toLocaleString()
-                            : String(row[col] ?? "");
-                          const showPill = col !== "count" && col === segmentDimForMap && mapAvailable;
-                          return (
-                            <td
-                              key={col}
-                              className={`py-1.5 ${
-                                col === "count"
-                                  ? "text-right tabular-nums"
-                                  : "font-mono text-xs"
-                              }`}
-                            >
-                              {showPill ? (
-                                <span className="inline-flex items-center gap-1.5">
-                                  <span
-                                    className="w-2 h-2 rounded-full shrink-0"
-                                    style={{ backgroundColor: dimColorHex(String(row[col] ?? "")) }}
-                                  />
-                                  {val}
-                                </span>
-                              ) : (
-                                val
-                              )}
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                )}
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {error && <ErrorBanner message={error} />}
+      {loadingMatrix && <LoadingText label="Loading matrix…" />}
+
+      {/* ── No results hint ── */}
+      {selectedDims.length >= minDims && !loadingMatrix && matrix.length === 0 && (() => {
+        const selectedDimMetas = availableDims.filter((d) => selectedDims.includes(d.dimKey));
+        const allEventTypes = new Set(selectedDimMetas.flatMap((d) => d.eventTypes));
+        const sharedEventType = [...allEventTypes].some((et) =>
+          selectedDimMetas.every((d) => d.eventTypes.includes(et)),
+        );
+        return (
+          <div className="rounded-lg border border-gray-800 bg-gray-900 p-6 text-center text-sm text-gray-500">
+            {!sharedEventType ? (
+              <>
+                <p className="mb-1">No results — selected dimensions come from different event types.</p>
+                <p className="text-xs text-gray-600">Cross-tabulation requires dimensions that co-occur on the same event.</p>
+              </>
+            ) : "No results for this combination."}
+          </div>
+        );
+      })()}
+
+      {/* ── Matrix results ── */}
+      {sortedMatrix.length > 0 && (
+        <div className="rounded-lg border border-gray-800 bg-gray-900 p-4 space-y-4">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <h2 className="text-sm font-medium text-gray-300">
+              {effectiveDims.map((d) => (
+                <code key={d} className="text-blue-300 text-xs mx-0.5">{d}</code>
+              ))}
+              <span className="text-gray-500 ml-1 font-normal text-xs">
+                ({sortedMatrix.length} row{sortedMatrix.length !== 1 ? "s" : ""})
+              </span>
+            </h2>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => { const next = !showSparklines; setShowSparklines(next); }}
+                title="Toggle trend sparklines"
+                className={`px-2.5 py-0.5 text-xs rounded border transition-colors ${
+                  showSparklines
+                    ? "bg-blue-600/20 border-blue-700/50 text-blue-300"
+                    : "bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-300"
+                }`}
+              >
+                {loadingTrend ? "…" : "Trend"}
+              </button>
+              <div className="flex rounded-md bg-gray-800 p-0.5">
+                {([
+                  ["bar", "Bar"],
+                  ["treemap", "Treemap"],
+                  ...(mapAvailable ? [["map", "Map"] as [ChartType, string]] : []),
+                ] as [ChartType, string][]).map(([type, label]) => (
+                  <button
+                    key={type}
+                    onClick={() => setChartType(type)}
+                    className={`px-2.5 py-0.5 text-xs rounded transition-colors ${
+                      chartType === type ? "bg-gray-700 text-gray-100" : "text-gray-400 hover:text-gray-300"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {chartType === "bar" && chartData.length > 0 && (
+            <div style={{ height: Math.max(300, chartData.length * 28 + 40) }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={chartData} layout="vertical" margin={{ left: 10, right: 20, top: 5, bottom: 5 }}>
+                  <XAxis type="number" tick={{ fill: "#9ca3af", fontSize: 11 }} axisLine={{ stroke: "#374151" }} tickLine={false} />
+                  <YAxis type="category" dataKey="name" width={180} tick={{ fill: "#d1d5db", fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <Tooltip {...CHART_TOOLTIP_PROPS} />
+                  <Bar dataKey="count" radius={[0, 4, 4, 0]}>
+                    {chartData.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {chartType === "treemap" && chartData.length > 0 && (
+            <div style={{ height: 400 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <Treemap data={chartData} dataKey="count" nameKey="name" isAnimationActive={false}
+                  content={<TreemapContent x={0} y={0} width={0} height={0} name="" value={0} index={0} />}
+                />
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {chartType === "map" && mapAvailable && (
+            <Suspense fallback={
+              <div style={{ height: 450 }} className="flex items-center justify-center rounded-lg bg-gray-800/50">
+                <span className="text-sm text-gray-500">Loading map…</span>
+              </div>
+            }>
+              <DonutClusterMap matrixData={sortedMatrix} geoDim={geoDimForMap} segmentDim={segmentDimForMap} lngDim={lngDimForMap} height={450} />
+            </Suspense>
+          )}
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-800 text-left">
+                  {columns.map((col) => (
+                    <th
+                      key={col}
+                      onClick={col !== "_sparkline" ? () => handleSort(col) : undefined}
+                      className={`pb-2 font-medium transition-colors ${
+                        col === "_sparkline" ? "text-gray-500 text-right" :
+                        col === "__agg" ? "text-right cursor-pointer hover:text-gray-200" :
+                        "cursor-pointer hover:text-gray-200"
+                      } ${sort.column === col ? "text-blue-400" : "text-gray-500"}`}
+                    >
+                      {col === "_sparkline" ? "Trend" : col === "__agg" ? aggLabel : col}
+                      {col !== "_sparkline" && sort.column === col && (
+                        <span className="ml-1">{sort.direction === "asc" ? "↑" : "↓"}</span>
+                      )}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-800/50">
+                {sortedMatrix.map((row, i) => (
+                  <tr key={i} className="text-gray-300 hover:bg-gray-800/30">
+                    {columns.map((col) => {
+                      if (col === "_sparkline") {
+                        const rowKey = effectiveDims.map((d) => String(row[d] ?? "")).join("\x00");
+                        return (
+                          <td key="_sparkline" className="py-1.5 text-right">
+                            <Sparkline data={trendByKey.get(rowKey) ?? []} />
+                          </td>
+                        );
+                      }
+                      const val = col === "__agg"
+                        ? Number(row.count).toLocaleString()
+                        : String(row[col] ?? "");
+                      const showPill = col !== "__agg" && col === segmentDimForMap && mapAvailable;
+                      return (
+                        <td key={col} className={`py-1.5 ${col === "__agg" ? "text-right tabular-nums" : "font-mono text-xs"}`}>
+                          {showPill ? (
+                            <span className="inline-flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: dimColorHex(String(row[col] ?? "")) }} />
+                              {val}
+                            </span>
+                          ) : val}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>
