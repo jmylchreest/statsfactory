@@ -1,6 +1,6 @@
 {
   "name": "@statsfactory/sdk",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "TypeScript SDK for statsfactory anonymous event telemetry",
   "type": "module",
   "main": "./dist/index.cjs",
