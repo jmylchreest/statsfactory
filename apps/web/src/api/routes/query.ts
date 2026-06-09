@@ -468,6 +468,10 @@ const sessionsRoute = createRoute({
       content: { "application/json": { schema: SessionsResponseSchema } },
       description: "Session summaries.",
     },
+    400: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Invalid query parameters.",
+    },
     500: {
       content: { "application/json": { schema: ErrorResponseSchema } },
       description: "Query failed.",
@@ -483,7 +487,7 @@ queryRouter.openapi(sessionsRoute, async (c) => {
   const limit = parseLimit(query.limit, DEFAULT_LIMIT, MAX_LIMIT);
 
   if (from && to && from > to) {
-    return c.json({ error: '"from" must be before "to"' }, 500);
+    return c.json({ error: '"from" must be before "to"' }, 400);
   }
 
   const db = c.get("db");
@@ -527,11 +531,8 @@ const sessionTimelineRoute = createRoute({
   responses: {
     200: {
       content: { "application/json": { schema: SessionTimelineResponseSchema } },
-      description: "Session events timeline.",
-    },
-    404: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
-      description: "Session not found.",
+      description:
+        "Session events timeline. Returns an empty events array if the session has no events; clients should distinguish from an unknown session by checking the array length.",
     },
     500: {
       content: { "application/json": { schema: ErrorResponseSchema } },
@@ -548,9 +549,6 @@ queryRouter.openapi(sessionTimelineRoute, async (c) => {
 
   try {
     const events = await querySessionTimeline(db, appId, sessionId);
-    if (events.length === 0) {
-      return c.json({ error: "Session not found" }, 404);
-    }
     return c.json({
       session_id: sessionId,
       events: events.map((e) => ({

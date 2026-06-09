@@ -7,6 +7,9 @@ import {
   validateEvents,
   dimType,
   MAX_DIMENSIONS_PER_EVENT,
+  EVENT_CHUNK_ROWS,
+  DIM_CHUNK_ROWS,
+  MAX_STATEMENTS_PER_INVOCATION,
   type IngestEvent,
   type ValidationError,
 } from "../lib/schemas";
@@ -162,9 +165,10 @@ ingestRouter.openapi(ingestRoute, async (c) => {
   const finalEvents: MergedEvent[] = [...standalone];
 
   for (const merged of mergedMap.values()) {
-    // Check user-provided dim count on merged result
+    // Check user-provided dim count on merged result.
+    // Use hasOwnProperty to avoid prototype-chain lookups against enrichedDims.
     const userDimCount = Object.keys(merged.dims).filter(
-      (k) => !(k in enrichedDims),
+      (k) => !Object.prototype.hasOwnProperty.call(enrichedDims, k),
     ).length;
     if (userDimCount > MAX_DIMENSIONS_PER_EVENT) {
       // Reject all items that contributed to this merged event
@@ -215,13 +219,11 @@ ingestRouter.openapi(ingestRoute, async (c) => {
     }
   }
 
-  // Batch insert into D1.
-  // D1 limits bind parameters to 100 per statement, so we chunk inserts.
-  // Events: 8 columns → max 12 rows/chunk. Dimensions: 4 columns → max 25 rows/chunk.
-  // D1 free tier limits total statements to 50 per Worker invocation.
-  const EVENT_CHUNK = 12;
-  const DIM_CHUNK = 25;
-  const MAX_STATEMENTS = 50;
+  // Batch insert into D1. Chunk sizes are defined in schemas.ts alongside
+  // the D1 limit constants — keep them in sync.
+  const EVENT_CHUNK = EVENT_CHUNK_ROWS;
+  const DIM_CHUNK = DIM_CHUNK_ROWS;
+  const MAX_STATEMENTS = MAX_STATEMENTS_PER_INVOCATION;
 
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Drizzle batch expects non-empty tuple; we build dynamically

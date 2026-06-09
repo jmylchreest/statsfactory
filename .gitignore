@@ -3,6 +3,9 @@ dist/
 .turbo/
 .astro/
 .wrangler/
+__pycache__/
+*.pyc
+*.egg-info/
 *.log
 .env
 .env.local

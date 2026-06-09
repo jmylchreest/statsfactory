@@ -90,9 +90,6 @@ function filterCondition(alias: string, f: DimensionFilter): ReturnType<typeof s
         OR (${sql.raw(alias)}.dim_type != 'array' AND ${sql.raw(alias)}.dim_value IN (${valuePlaceholders}))
       )`;
     }
-
-    default:
-      return sql`${sql.raw(alias)}.dim_value = ${f.value}`;
   }
 }
 
@@ -510,7 +507,11 @@ export async function queryMatrix(
 
   const rows = await db.all(query);
 
-  // Map aliased columns back to dimension key names
+  // Map aliased columns back to dimension key names.
+  // D1/libSQL returns numeric aggregates as JS numbers already; the only
+  // fallback needed is for the (rare) case where the column is missing
+  // (e.g. an empty result set) — coerce to 0 then. `Number(NaN)` would
+  // silently propagate, so avoid wrapping the value when it's already a number.
   return (rows as Record<string, unknown>[]).map((row) => {
     const mapped: MatrixRow = {};
     for (const dim of params.dimensions) {
@@ -521,7 +522,7 @@ export async function queryMatrix(
         mapped[dim] = String(row[`dim${idx}`] ?? "");
       }
     }
-    mapped.count = Number(row.count ?? 0);
+    mapped.count = row.count == null ? 0 : Number(row.count);
     return mapped;
   });
 }
@@ -534,6 +535,11 @@ export type MatrixTrendRow = Record<string, string | number> & { bucket: string;
  * Same as queryMatrix but adds a `bucket` time dimension to the GROUP BY and
  * SELECT, returning (dim0, dim1, ..., bucket, count) rows. The caller groups
  * by dim combination to build per-row trend sparklines.
+ *
+ * Ordering: results are sorted by `bucket ASC` (so a caller can stream
+ * time-ordered data) with `count DESC` as a stable tiebreaker — important
+ * when LIMIT truncates the result, since two (dim, bucket) groups cannot
+ * share a row position based on bucket alone.
  */
 export async function queryMatrixTrend(
   db: Database,
@@ -606,14 +612,17 @@ export async function queryMatrixTrend(
     ${sql.join(joinParts, sql` `)}
     WHERE ${sql.join(conditions, sql` AND `)}
     GROUP BY ${sql.join(groupByParts, sql`, `)}
-    ORDER BY bucket ASC
+    ORDER BY bucket ASC, count DESC
     LIMIT ${params.limit}
   `;
 
   const rows = await db.all(query);
 
   return (rows as Record<string, unknown>[]).map((row) => {
-    const mapped: MatrixTrendRow = { bucket: String(row["bucket"] ?? ""), count: Number(row.count ?? 0) };
+    const mapped: MatrixTrendRow = {
+      bucket: String(row["bucket"] ?? ""),
+      count: row.count == null ? 0 : Number(row.count),
+    };
     for (const dim of params.dimensions) {
       if (dim === "event_name") {
         mapped["event_name"] = String(row["event_name_dim"] ?? "");

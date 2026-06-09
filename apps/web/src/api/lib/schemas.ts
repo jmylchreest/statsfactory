@@ -39,6 +39,16 @@ export const MAX_DIM_VALUE_LENGTH = 1024;
 export const MAX_FILTERS = 10;
 export const MAX_LIMIT = 1000;
 export const DEFAULT_LIMIT = 100;
+
+// D1 hard limits that drive ingest chunking.
+//   MAX_BIND_PARAMS_PER_QUERY  = D1 hard limit on ?-params per statement
+//   MAX_STATEMENTS_PER_INVOCATION = D1 free tier cap on statements/Worker call
+//   EVENT_CHUNK_ROWS            = events table rows per insert statement (8 cols × 12 = 96 params)
+//   DIM_CHUNK_ROWS              = event_dimensions rows per insert statement (4 cols × 25 = 100 params)
+export const MAX_BIND_PARAMS_PER_QUERY = 100;
+export const MAX_STATEMENTS_PER_INVOCATION = 50;
+export const EVENT_CHUNK_ROWS = 12;
+export const DIM_CHUNK_ROWS = 25;
 // Regex patterns — exported for tests
 export const EVENT_NAME_RE = /^[a-z][a-z0-9_]{0,63}$/;
 export const DIM_KEY_RE = /^[a-z][a-z0-9_.]{0,63}$/;
@@ -98,11 +108,17 @@ export const IngestEventSchema = z
       example: "user_42",
       description: "Client-provided distinct user identifier.",
     }),
-    value: z.number().optional().openapi({
-      example: 42.5,
-      description:
-        "Optional numeric value for metric aggregation. When provided, the event can be queried with SUM/AVG/MIN/MAX aggregation. Absence means the event is count-only.",
-    }),
+    value: z
+      .number()
+      .finite()
+      .min(-1e15)
+      .max(1e15)
+      .optional()
+      .openapi({
+        example: 42.5,
+        description:
+          "Optional numeric value for metric aggregation. When provided, the event can be queried with SUM/AVG/MIN/MAX aggregation. Absence means the event is count-only. Must be a finite number in [-1e15, 1e15].",
+      }),
     dimensions: z
       .record(
         z.string(),

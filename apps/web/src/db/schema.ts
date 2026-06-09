@@ -41,7 +41,7 @@ export const events = sqliteTable(
     timestamp: text("timestamp").notNull(), // ISO 8601, client-provided
     sessionId: text("session_id"),
     distinctId: text("distinct_id"),
-    value: real("value"), // nullable — absent means count-only event
+    value: real("value"), // nullable — absent means count-only event. SQLite REAL = 8-byte IEEE 754 (same precision as JS double).
     createdAt: text("created_at").notNull(), // server receive time
   },
   (table) => [
